@@ -5,7 +5,6 @@ coverage
 build
 package-lock.json
 next-env.d.ts
-supabase/.temp
 public/sw.js
 README.md
 .opencode

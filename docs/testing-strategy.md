@@ -15,17 +15,22 @@ primer nivel.
 - Toda regla RN-01 a RN-10 debe tener al menos una prueba unitaria y, cuando
   dependa de la base, una prueba de integración.
 - Los permisos se prueban por rol: acceso permitido y acceso denegado.
+- Las pruebas usan datos ficticios; nunca datos personales reales.
 
 ## 2. Herramientas
 
-| Nivel       | Herramienta                           | Estado                |
-| ----------- | ------------------------------------- | --------------------- |
-| Unitarias   | Vitest 5 + jsdom 30 + Testing Library | Configurado           |
-| Integración | Vitest + Supabase local (Docker)      | Previsto para Etapa 2 |
-| E2E         | Playwright                            | Previsto para Etapa 6 |
+| Nivel       | Herramienta                                          | Estado                |
+| ----------- | ---------------------------------------------------- | --------------------- |
+| Unitarias   | Vitest 5 + jsdom 30 + Testing Library                | Configurado           |
+| Integración | Vitest + MongoDB local en Docker (replica set `rs0`) | Previsto para Etapa 2 |
+| E2E         | Playwright                                           | Previsto para Etapa 6 |
 
 No se instala Playwright todavía para evitar descargas de navegadores antes de
 tener flujos funcionales que probar.
+
+La base de integración será el contenedor local definido en `compose.yaml`, que
+ya incluye un replica set para probar transacciones. `mongodb-memory-server` queda
+como alternativa para CI si se necesita aislamiento sin Docker.
 
 ## 3. Organización
 
@@ -50,42 +55,73 @@ Convenciones:
 
 ## 4. Qué probar por etapa
 
-| Etapa | Foco                                                                      |
-| ----- | ------------------------------------------------------------------------- |
-| 0     | Configuración de entorno, render base, comandos de calidad.               |
-| 1     | Componentes de UI, navegación, estados visuales y accesibilidad básica.   |
-| 2     | Autenticación, roles, activación/desactivación y RLS por rol.             |
-| 3     | Transiciones de disponibilidad, historial y advertencia de 4 horas.       |
-| 4     | Convocatoria única activa, respuestas `VOY`/`NO_PUEDO`, cierre y conteos. |
-| 5     | Registro de intentos/resultados de notificación y bandeja interna.        |
-| 6     | Flujos completos, permisos, PWA en dispositivos y regresión.              |
+| Etapa | Foco                                                                          |
+| ----- | ----------------------------------------------------------------------------- |
+| 0     | Configuración de entorno, render base, comandos de calidad.                   |
+| 1     | Componentes de UI, navegación, estados visuales y accesibilidad básica.       |
+| 2     | RUT, Argon2id, login, sesión, roles, activación/desactivación y autorización. |
+| 3     | Transiciones de disponibilidad, historial y advertencia de 4 horas.           |
+| 4     | Convocatoria única activa, respuestas `VOY`/`NO_PUEDO`, cierre y conteos.     |
+| 5     | Registro de intentos/resultados de notificación y bandeja interna.            |
+| 6     | Flujos completos, permisos, PWA en dispositivos y regresión.                  |
 
 Reglas críticas y ejemplos de casos:
 
 - RN-03: a las 4 h se muestra advertencia y el estado no cambia.
-- RN-05: una segunda activación concurrente falla en base de datos.
+- RN-05: una segunda activación concurrente falla por el índice único parcial.
 - RN-06: la convocatoria incluye brigadistas `NO_DISPONIBLE` y desactualizados.
 - RN-07: un brigadista desactivado no recibe nuevas convocatorias.
 - RN-08/RN-09: solo `VOY`/`NO_PUEDO`; `VOY` no cambia disponibilidad a
   `EN_SERVICIO`.
 - RN-10: el historial conserva cada cambio con fecha y hora.
 
-## 5. Integración
+## 5. Autenticación y autorización
 
-Se ejecutará contra Supabase local, nunca contra producción:
+Unitarias obligatorias antes de implementar el login:
 
-- Migraciones aplicadas con `npm run db:reset`.
-- Pruebas de restricciones: convocatoria activa única, respuesta duplicada,
-  claves foráneas y estados válidos.
-- Pruebas de RLS con clientes autenticados por rol.
-- Limpieza de datos entre pruebas o transacciones con rollback.
-- Sin `service_role` en pruebas que deban validar RLS; usarla solo para
-  preparar datos cuando sea imprescindible y justificado.
+- Normalización y validación de RUT con módulo 11.
+- Hash y verificación de contraseña con Argon2id.
+- `authorize`: usuario activo, inactivo, inexistente y contraseña incorrecta.
+- Mensaje genérico y ausencia de datos sensibles en token y sesión.
+- Helpers de autorización por rol y usuario inactivo.
+
+Integración:
+
+- Login contra una base de prueba con usuarios ficticios.
+- Índice único de RUT canónico.
+- Una desactivación o cambio de rol afecta operaciones sensibles sin esperar el
+  vencimiento del token.
+- Flags de la cookie de sesión.
+- Matriz de permisos: cada rol y operación sensible con un caso permitido y uno
+  denegado.
+- Los errores de login no revelan si el RUT existe.
+
+El diseño detallado está en `docs/authentication.md`.
+
+## 6. Integración con MongoDB
+
+Se ejecutará contra MongoDB local en Docker (`127.0.0.1:27018`), nunca contra
+producción:
+
+- Base de pruebas separada de la de desarrollo; recrearla con `npm run db:reset`
+  antes de una suite que requiera estado limpio.
+- Migraciones aplicadas sobre una base limpia.
+- Pruebas de índices: RUT único, respuesta única y convocatoria activa única.
+- Pruebas de validadores: roles, estados y respuestas inválidas.
+- Pruebas de transacciones: activación de convocatoria y creación de
+  notificaciones como una sola operación.
+- Pruebas de destinatarios: excluir usuarios inactivos.
+- Limpieza de datos entre pruebas o uso de una base descartable.
+
+La autorización se prueba en los helpers de servidor y en las server actions. No
+debe existir acceso directo del navegador a MongoDB.
+Para cada operación sensible se verifica que el servidor rechace al rol incorrecto
+aunque la interfaz oculte el botón.
 
 Criterio de aceptación de seguridad: para cada rol y operación sensible debe
 existir un caso permitido y uno denegado.
 
-## 6. Cobertura y calidad
+## 7. Cobertura y calidad
 
 - Objetivo: 80% de líneas y funciones en reglas de negocio de `src/features` y
   utilidades críticas de `src/lib`.
@@ -95,7 +131,7 @@ existir un caso permitido y uno denegado.
 - Configuración actual: `@vitest/coverage-v8`, reportes `text` y `html`.
 - Los umbrales se activarán cuando existan módulos de dominio estables.
 
-## 7. Comandos
+## 8. Comandos
 
 ```bash
 npm test                # unitarias
@@ -111,7 +147,7 @@ La validación completa antes de una entrega es:
 npm run check && npm run build
 ```
 
-## 8. Fuera de alcance en Etapa 0
+## 9. Fuera de alcance en Etapa 0
 
 - Pruebas de integración reales.
 - Pruebas E2E.

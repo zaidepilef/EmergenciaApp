@@ -1,0 +1,36 @@
+name: brigada-emergencias
+
+services:
+  mongo:
+    image: mongo:8.2.12
+    restart: unless-stopped
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--port", "27018"]
+    ports:
+      - "127.0.0.1:27018:27018"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - |
+          mongosh --quiet --port 27018 --eval '
+            function isReady() {
+              const info = db.hello();
+              return info.setName === "rs0" && info.isWritablePrimary === true;
+            }
+            try { if (isReady()) { quit(0); } } catch (error) {}
+            try {
+              rs.initiate({
+                _id: "rs0",
+                members: [{ _id: 0, host: "127.0.0.1:27018" }]
+              });
+            } catch (error) {}
+            quit(isReady() ? 0 : 1);
+          '
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+
+volumes:
+  mongo_data:

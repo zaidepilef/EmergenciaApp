@@ -37,14 +37,15 @@ reemplaza la confirmación de asistencia a una emergencia concreta.
                                       si puede asistir.
   -----------------------------------------------------------------------
 
-Los permisos deben validarse en el backend y reforzarse mediante
-políticas de seguridad de Supabase (RLS). Ocultar botones en la interfaz
-no constituye una medida de seguridad.
+Los permisos deben validarse en el backend, con autorización explícita en el
+servidor y reglas de integridad en MongoDB. Ocultar botones en la interfaz no
+constituye una medida de seguridad.
 
 ## 3. Funcionalidades del MVP
 
 ### 3.1 Autenticación y usuarios
 
+-   Inicio de sesión con RUT y contraseña.
 -   Inicio y cierre de sesión.
 -   Recuperación de contraseña.
 -   Administración de brigadistas.
@@ -165,92 +166,73 @@ Conservar, al menos:
   RN-10                               El sistema mantiene historial y
                                       trazabilidad de las operaciones
                                       relevantes.
-  -----------------------------------------------------------------------
 
 ## 5. Arquitectura y tecnologías propuestas
 
-  -----------------------------------------------------------------------
-  Área                                Tecnología
-  ----------------------------------- -----------------------------------
-  Frontend                            Next.js + TypeScript
+| Área                      | Tecnología                                                       |
+| ------------------------- | ---------------------------------------------------------------- |
+| Frontend                  | Next.js + TypeScript                                             |
+| Estilos                   | Tailwind CSS                                                     |
+| Backend                   | Server Actions y Route Handlers de Next.js                       |
+| Autenticación             | Auth.js (Credentials Provider, RUT + contraseña, sesión JWT)     |
+| Contraseñas               | Argon2id (`@node-rs/argon2`)                                     |
+| Persistencia              | MongoDB local con Docker en desarrollo; Atlas en producción      |
+| Seguridad de datos        | Autorización en servidor, validadores, índices y transacciones   |
+| Aplicación inicial        | PWA                                                              |
+| Distribución móvil futura | Capacitor para Android e iOS                                     |
+| Despliegue web propuesto  | Vercel                                                           |
+| Notificaciones push       | Evaluar Firebase Cloud Messaging y compatibilidad por plataforma |
 
-  Estilos                             Tailwind CSS
-
-  Backend y autenticación             Supabase
-
-  Persistencia                        PostgreSQL administrado por
-                                      Supabase
-
-  Seguridad de datos                  Row Level Security (RLS)
-
-  Aplicación inicial                  PWA
-
-  Distribución móvil futura           Capacitor para Android e iOS
-
-  Despliegue web propuesto            Vercel
-
-  Notificaciones push                 Evaluar Firebase Cloud Messaging y
-                                      compatibilidad por plataforma
-  -----------------------------------------------------------------------
-
-Las versiones concretas de Node.js, Next.js, Supabase y dependencias
+Las versiones concretas de Node.js, Next.js, MongoDB, Auth.js y dependencias
 deben verificarse al crear el workspace y quedar fijadas en los archivos
 de configuración. No asumir versiones sin comprobar compatibilidad.
 
 ## 6. Modelo de datos inicial propuesto
 
-El diseño detallado debe validarse antes de crear migraciones. Como
-punto de partida:
+El diseño detallado debe validarse antes de crear colecciones o migraciones.
+Como punto de partida:
 
-  -----------------------------------------------------------------------
-  Entidad                             Propósito
-  ----------------------------------- -----------------------------------
-  `profiles`                          Perfil asociado al usuario
-                                      autenticado y su rol.
-
-  `brigadistas`                       Datos operativos del integrante y
-                                      estado activo/inactivo.
-
-  `availability_history`              Historial de cambios de
-                                      disponibilidad.
-
-  `emergencies`                       Convocatorias, datos de emergencia
-                                      y estado.
-
-  `emergency_responses`               Respuesta de cada brigadista a una
-                                      convocatoria.
-
-  `notifications`                     Destinatarios, intentos y
-                                      resultados de notificación.
-  -----------------------------------------------------------------------
+| Colección              | Propósito                                                       |
+| ---------------------- | --------------------------------------------------------------- |
+| `users`                | Identidad de acceso, RUT, hash de contraseña, rol y estado.     |
+| `brigadistas`          | Perfil operativo y disponibilidad actual del integrante.        |
+| `availability_history` | Historial de cambios de disponibilidad.                         |
+| `emergencies`          | Convocatorias, datos de emergencia y estado.                    |
+| `emergency_responses`  | Respuesta de cada brigadista a una convocatoria.                |
+| `notifications`        | Destinatarios, intentos y resultados de notificación.           |
+| `audit_logs`           | Registro de operaciones administrativas y de seguridad.         |
 
 Consideraciones:
 
--   Definir claves, restricciones, índices y relaciones antes de
-    implementar.
--   Impedir dos convocatorias activas mediante una garantía
-    transaccional en la base de datos, no solo mediante validación de
-    interfaz.
--   Evitar duplicar información de autenticación que ya administra
-    Supabase Auth.
+-   Definir claves, índices y referencias antes de implementar.
+-   Impedir dos convocatorias activas mediante un índice único parcial
+    en MongoDB, no solo mediante validación de interfaz.
+-   Mantener una única identidad de acceso por usuario; no duplicar
+    datos de autenticación en el perfil operativo.
 -   Definir reglas para impedir respuestas duplicadas y establecer qué
     ocurre si una convocatoria se cierra.
--   Guardar fechas en un estándar consistente (preferentemente UTC) y
-    presentarlas en la zona horaria configurada para la brigada.
+-   Guardar fechas en un estándar consistente (UTC) y presentarlas en la
+    zona horaria configurada para la brigada.
+-   El navegador no se conecta directamente a MongoDB.
+-   El desarrollo local usa MongoDB en Docker con replica set para
+    habilitar transacciones; producción usa Atlas.
 
 ## 7. Seguridad y privacidad
 
 -   Aplicar mínimo privilegio por rol.
--   Habilitar RLS en las tablas expuestas al cliente.
--   Validar permisos también en operaciones del servidor.
--   No incluir claves `service_role`, secretos ni credenciales en el
-    frontend o repositorio.
+-   Validar sesión, usuario activo y permisos en cada operación del
+    servidor.
+-   No incluir la cadena de conexión de MongoDB, `AUTH_SECRET` ni
+    credenciales en el frontend o repositorio.
 -   Usar variables de entorno y mantener un archivo `.env.example` sin
     secretos reales.
+-   Guardar contraseñas solo como hash Argon2id y no registrarlas en logs.
 -   Limitar los datos personales a los necesarios para operar la
     brigada.
 -   Registrar operaciones administrativas relevantes.
 -   Probar expresamente accesos permitidos y denegados para cada rol.
+-   Configurar en Atlas un usuario de base de datos con mínimo privilegio,
+    TLS y acceso de red restringido.
 
 ## 8. Alcance excluido del MVP
 
@@ -302,10 +284,12 @@ claros. No depender exclusivamente del color para comunicar estados.
 
 ### Etapa 2 --- Autenticación y administración
 
--   Integrar Supabase Auth.
--   Implementar perfiles y roles.
+-   Configurar MongoDB local (Docker) y Atlas para producción.
+-   Integrar Auth.js con Credentials Provider (RUT y contraseña).
+-   Implementar normalización/validación de RUT y hashing Argon2id.
+-   Implementar usuarios, perfiles y roles.
 -   Administrar brigadistas activos e inactivos.
--   Aplicar y probar RLS.
+-   Proteger rutas y server actions; probar permisos por rol.
 
 ### Etapa 3 --- Disponibilidad
 
@@ -375,10 +359,11 @@ en especificaciones OpenSpec antes de desarrollar las funcionalidades.
 ## 13. Workspace (Etapa 0)
 
 Estado: **preparado y validado**. No hay módulos funcionales, autenticación,
-tablas de negocio ni credenciales reales.
+colecciones de negocio, conexión a MongoDB ni credenciales reales.
 
 - Stack: Next.js 16.4.3, React 19.3.1, TypeScript 5.9.3, Tailwind CSS 4.3.3,
-  Supabase JS/SSR y PWA inicial mediante manifest.
+  Auth.js 5.0.0-beta.32, MongoDB 8.2.12 local en Docker, driver 7.8.0,
+  Argon2id y PWA inicial mediante manifest.
 - Node.js 24.19.0 LTS y npm 11.17.0, con versiones exactas en `package.json`.
 - Pruebas unitarias con Vitest 5, jsdom y Testing Library.
 - OpenSpec inicializado en `openspec/` para especificar cambios antes de
@@ -389,8 +374,12 @@ Puesta en marcha:
 ```bash
 npm ci
 cp .env.example .env.local
+npm run db:up
 npm run dev
 ```
+
+MongoDB local queda en `127.0.0.1:27018` con replica set `rs0`. La aplicación
+todavía no se conecta ni crea colecciones en la Etapa 0.
 
 Validación:
 
@@ -400,8 +389,9 @@ npm run check && npm run build
 
 Documentación:
 
-- `docs/architecture.md`: arquitectura, carpetas, auth y estrategia RLS.
+- `docs/architecture.md`: arquitectura, carpetas y seguridad.
+- `docs/authentication.md`: diseño de RUT, Argon2id, sesión y autorización.
+- `docs/mongodb-data-model.md`: colecciones, índices y migraciones MongoDB.
 - `docs/development-setup.md`: entorno local y comandos.
 - `docs/testing-strategy.md`: TDD, niveles y organización de pruebas.
-- `docs/database-migrations.md`: migraciones y convenciones PostgreSQL.
 - `docs/technical-decisions.md`: decisiones, descartes y pendientes.

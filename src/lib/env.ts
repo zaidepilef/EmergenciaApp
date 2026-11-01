@@ -1,23 +1,42 @@
-type PublicEnvKey = "NEXT_PUBLIC_SUPABASE_URL" | "NEXT_PUBLIC_SUPABASE_ANON_KEY";
+type ServerEnvKey = "MONGODB_URI" | "MONGODB_DB" | "AUTH_SECRET";
 
-export type PublicEnv = Record<PublicEnvKey, string>;
+export type ServerEnv = Record<ServerEnvKey, string>;
 
-export function readPublicEnv(source: Record<string, string | undefined> = process.env): PublicEnv {
-  const url = source.NEXT_PUBLIC_SUPABASE_URL?.trim();
-  const anonKey = source.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
+export const DEFAULT_MONGODB_DB = "brigada_emergencias";
+export const MIN_AUTH_SECRET_LENGTH = 32;
 
-  const missing: PublicEnvKey[] = [];
-  if (!url) missing.push("NEXT_PUBLIC_SUPABASE_URL");
-  if (!anonKey) missing.push("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+const MONGODB_URI_PATTERN = /^mongodb(?:\+srv)?:\/\/[^\s]+$/;
 
-  if (!url || !anonKey) {
+export function readServerEnv(source: Record<string, string | undefined> = process.env): ServerEnv {
+  const mongodbUri = source.MONGODB_URI?.trim();
+  const mongodbDb = source.MONGODB_DB?.trim() || DEFAULT_MONGODB_DB;
+  const authSecret = source.AUTH_SECRET?.trim();
+
+  const missing: ServerEnvKey[] = [];
+  if (!mongodbUri) missing.push("MONGODB_URI");
+  if (!authSecret) missing.push("AUTH_SECRET");
+
+  if (!mongodbUri || !authSecret) {
     throw new Error(
-      `Faltan variables de entorno públicas: ${missing.join(", ")}. Copiá .env.example a .env.local.`,
+      `Faltan variables de entorno del servidor: ${missing.join(", ")}. Copiá .env.example a .env.local.`,
+    );
+  }
+
+  if (!MONGODB_URI_PATTERN.test(mongodbUri)) {
+    throw new Error(
+      "MONGODB_URI debe comenzar con mongodb:// o mongodb+srv:// y no contener espacios.",
+    );
+  }
+
+  if (authSecret.length < MIN_AUTH_SECRET_LENGTH) {
+    throw new Error(
+      `AUTH_SECRET debe tener al menos ${MIN_AUTH_SECRET_LENGTH} caracteres. Generá uno con "npx auth secret".`,
     );
   }
 
   return {
-    NEXT_PUBLIC_SUPABASE_URL: url,
-    NEXT_PUBLIC_SUPABASE_ANON_KEY: anonKey,
+    MONGODB_URI: mongodbUri,
+    MONGODB_DB: mongodbDb,
+    AUTH_SECRET: authSecret,
   };
 }

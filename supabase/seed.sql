@@ -1,3 +1,0 @@
--- Datos de prueba locales.
--- No agregar datos personales reales ni secretos.
--- La Etapa 0 no crea tablas de negocio, por lo que este archivo está vacío.

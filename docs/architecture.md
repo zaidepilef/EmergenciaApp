@@ -13,25 +13,27 @@ Brigada Emergencias es una PWA para una sola brigada (RN-01). El MVP permite:
 - Que el coordinador consulte el estado de la brigada y el historial.
 
 La Etapa 0 deja el workspace preparado, sin módulos funcionales, sin
-autenticación implementada y sin tablas de negocio.
+autenticación implementada, sin conexión a MongoDB y sin colecciones de negocio.
 
 ## 2. Stack y versiones
 
 Las versiones están fijadas en `package.json` (sin rangos `^` ni `~`).
 
-| Área               | Tecnología                                          | Versión                 |
-| ------------------ | --------------------------------------------------- | ----------------------- |
-| Runtime            | Node.js LTS                                         | 24.19.0                 |
-| Gestor de paquetes | npm                                                 | 11.17.0                 |
-| Framework          | Next.js (App Router, Turbopack)                     | 16.4.3                  |
-| UI                 | React / React DOM                                   | 19.3.1                  |
-| Lenguaje           | TypeScript                                          | 5.9.3                   |
-| Estilos            | Tailwind CSS + `@tailwindcss/turbopack`             | 4.3.3                   |
-| Backend / Auth     | Supabase (`@supabase/supabase-js`, `@supabase/ssr`) | 2.118.0 / 0.12.7        |
-| Base de datos      | PostgreSQL administrado por Supabase                | Provista por Supabase   |
-| Pruebas unitarias  | Vitest + jsdom + Testing Library                    | 5.0.5 / 30.1.3 / 16.3.3 |
-| Calidad            | ESLint + Prettier                                   | 9.39.5 / 3.9.10         |
-| Migraciones        | Supabase CLI (devDependency)                        | 2.122.0                 |
+| Área               | Tecnología                                   | Versión                 |
+| ------------------ | -------------------------------------------- | ----------------------- |
+| Runtime            | Node.js LTS                                  | 24.19.0                 |
+| Gestor de paquetes | npm                                          | 11.17.0                 |
+| Framework          | Next.js (App Router, Turbopack)              | 16.4.3                  |
+| UI                 | React / React DOM                            | 19.3.1                  |
+| Lenguaje           | TypeScript                                   | 5.9.3                   |
+| Estilos            | Tailwind CSS + `@tailwindcss/turbopack`      | 4.3.3                   |
+| Autenticación      | Auth.js (`next-auth`)                        | 5.0.0-beta.32           |
+| Base de datos      | MongoDB local (Docker) / Atlas en producción | Servidor 8.2.12         |
+| Driver MongoDB     | `mongodb`                                    | 7.8.0                   |
+| Contraseñas        | Argon2id (`@node-rs/argon2`)                 | 2.2.2                   |
+| Pruebas unitarias  | Vitest + jsdom + Testing Library             | 5.0.5 / 30.1.3 / 16.3.3 |
+| Calidad            | ESLint + Prettier                            | 9.39.5 / 3.9.10         |
+| Migraciones        | Scripts Node versionados (previstos)         | Sin herramienta externa |
 
 La justificación de cada decisión está en `docs/technical-decisions.md`.
 
@@ -45,22 +47,24 @@ Navegador / PWA instalada
 Next.js 16 (App Router, React Server Components)
   - UI y navegación
   - Server Actions / Route Handlers (etapas futuras)
-  - Validación de permisos del lado servidor
+  - Auth.js: Credentials Provider + sesión JWT
+  - Autorización por rol en el servidor
         |
-        | @supabase/ssr + JWT
+        | Driver oficial de MongoDB (solo servidor; TLS en producción)
         v
-Supabase
-  - Auth (sesiones y recuperación de contraseña)
-  - PostgREST (API sobre PostgreSQL)
-  - PostgreSQL + Row Level Security (RLS)
-  - Storage / Realtime / Edge Functions solo si se justifican
+MongoDB (Docker local en desarrollo / Atlas en producción)
+  - replica set local rs0; replica set administrado en Atlas
+  - users, brigadistas, availability_history
+  - emergencies, emergency_responses, notifications, audit_logs
+  - Validadores JSON Schema, índices y transacciones
         |
         v
 Proveedor de push (a definir, probablemente FCM) en Etapa 5
 ```
 
 Regla estructural: el cliente nunca es la autoridad. Los permisos se validan en
-el servidor y se refuerzan con RLS en PostgreSQL. Ocultar un botón no es una
+el servidor antes de cada operación. El navegador no se conecta directamente a
+MongoDB y no recibe credenciales de base de datos. Ocultar un botón no es una
 medida de seguridad.
 
 ## 4. Organización de carpetas
@@ -69,6 +73,7 @@ Estado actual:
 
 ```text
 .
+├── compose.yaml              MongoDB local con replica set para desarrollo
 ├── src/
 │   ├── app/                  Rutas, layouts, metadata y manifest PWA
 │   │   ├── globals.css
@@ -79,13 +84,11 @@ Estado actual:
 │   │   └── ui/               Componentes visuales reutilizables
 │   ├── features/             Módulos de negocio por dominio (vacío por ahora)
 │   ├── lib/
-│   │   ├── env.ts            Lectura y validación de variables públicas
-│   │   └── supabase/         Clientes de Supabase (browser / server)
-│   └── types/                Tipos compartidos y tipos generados de la base
+│   │   └── env.ts            Lectura y validación de variables del servidor
+│   └── types/                Tipos compartidos
 ├── tests/
 │   ├── unit/                 Pruebas unitarias con Vitest
-│   └── integration/          Pruebas contra Supabase/PostgreSQL local
-├── supabase/                 Configuración y migraciones (sin tablas aún)
+│   └── integration/          Pruebas con MongoDB de prueba (previstas)
 ├── docs/                     Documentación técnica
 ├── openspec/                 Especificaciones y cambios
 └── public/                   Assets estáticos (iconos PWA)
@@ -97,56 +100,65 @@ Carpetas previstas para etapas funcionales (no crear hasta necesitarlas):
 src/app/(auth)/               Inicio de sesión y recuperación
 src/app/(brigadista)/         Disponibilidad y bandeja de convocatorias
 src/app/(coordinador)/        Dashboard y administración
+src/proxy.ts                  Protección gruesa de rutas con Auth.js
 src/features/availability/    Reglas y casos de uso de disponibilidad
 src/features/emergencies/     Convocatorias y respuestas
 src/features/notifications/   Intentos y resultados de notificación
 src/features/users/           Perfiles, roles y brigadistas
+src/lib/auth/                 Configuración de Auth.js, autorización y contraseñas
+src/lib/mongodb/              Cliente singleton, colecciones y repositorios
+db/migrations/                Scripts de colecciones, validadores e índices
 ```
 
 ## 5. Separación de responsabilidades
 
-| Capa            | Responsabilidad                                       | Ubicación                              |
-| --------------- | ----------------------------------------------------- | -------------------------------------- |
-| Presentación    | Render, accesibilidad, estados visuales               | `src/app`, `src/components`            |
-| Dominio         | Reglas de negocio puras (RN-01 a RN-10), validaciones | `src/features/*`                       |
-| Acceso a datos  | Consultas y mutaciones a Supabase                     | `src/features/*/data` o server actions |
-| Infraestructura | Clientes, configuración, utilidades                   | `src/lib`                              |
-| Base de datos   | Integridad, restricciones, RLS, historial             | `supabase/migrations`                  |
+| Capa            | Responsabilidad                                             | Ubicación                         |
+| --------------- | ----------------------------------------------------------- | --------------------------------- |
+| Presentación    | Render, accesibilidad, estados visuales                     | `src/app`, `src/components`       |
+| Dominio         | Reglas de negocio puras (RN-01 a RN-10), validaciones       | `src/features/*`                  |
+| Acceso a datos  | Consultas y mutaciones con el driver oficial de MongoDB     | `src/lib/mongodb`, server actions |
+| Infraestructura | Configuración de Auth.js, variables de entorno, utilidades  | `src/lib`                         |
+| Base de datos   | Integridad, validadores, índices, historial y transacciones | Migraciones y MongoDB local/Atlas |
 
 Principios:
 
 - Las reglas de negocio críticas deben poder probarse sin navegador ni red.
-- Las páginas y componentes no acceden directamente a PostgreSQL.
-- Las consultas que dependen de permisos se ejecutan del lado servidor cuando
-  corresponda.
+- Las páginas y componentes no acceden directamente a MongoDB.
+- Las consultas que dependen de permisos se ejecutan del lado servidor.
 - No se agregan capas, ORM ni librerías de estado hasta que aporten valor real.
 
-## 6. Integración con Supabase
+## 6. Integración con MongoDB
 
-Estado en Etapa 0: clientes preparados, sin conexión ni credenciales reales.
+Estado en Etapa 0: variables validadas y MongoDB local disponible con Docker,
+sin conexión desde la aplicación y sin colecciones de negocio.
 
-- `src/lib/env.ts` valida `NEXT_PUBLIC_SUPABASE_URL` y
-  `NEXT_PUBLIC_SUPABASE_ANON_KEY`, y falla con un mensaje claro si faltan.
-- `src/lib/supabase/browser.ts` expone un cliente de navegador con `anon key`.
-- `src/lib/supabase/server.ts` crea un cliente por request con cookies usando
-  `@supabase/ssr`.
-- La `service_role key` nunca se usa en el cliente ni se prefija con
-  `NEXT_PUBLIC_`. Solo podrá usarse en scripts de servidor autorizados.
+- `compose.yaml` levanta MongoDB 8.2.12 en `127.0.0.1:27018` con el replica set
+  `rs0`. El puerto se elige para evitar conflictos con otras instancias locales.
+- El healthcheck inicia el replica set y `docker compose up --wait` espera a que
+  exista un primary. Esto permite probar transacciones localmente.
+- `src/lib/env.ts` valida `MONGODB_URI`, `MONGODB_DB` y `AUTH_SECRET`, y falla
+  con un mensaje claro si faltan o son inválidas.
+- `MONGODB_URI` y `AUTH_SECRET` son secretos de servidor. Nunca se prefijan con
+  `NEXT_PUBLIC_` ni se envían al navegador.
+- El futuro cliente de MongoDB se creará como singleton del servidor y se
+  reutilizará entre recargas de desarrollo para evitar conexiones duplicadas.
+- Se usará el driver oficial `mongodb`, sin ODM ni ORM. Los tipos de las
+  colecciones se declaran en TypeScript.
+- Las operaciones que afectan más de un documento usarán transacciones de
+  MongoDB. El replica set local y Atlas las soportan.
+- En producción se usará MongoDB Atlas con TLS, cifrado en reposo, respaldos y
+  un usuario con el mínimo privilegio sobre una única base lógica.
+- No se usará `@auth/mongodb-adapter`: Credentials con sesión JWT no lo requiere
+  y su peer declara `mongodb ^6`, incompatible con el driver 7.
 
-Etapa 2 (autenticación) agregará:
-
-- `proxy.ts` de Next.js 16 (reemplaza `middleware.ts`) para refrescar sesión.
-- Gestión de sesión y redirecciones por rol.
-- Generación de tipos de base de datos (`supabase gen types typescript`) una vez
-  existan tablas aprobadas.
-
-No se define ORM: el acceso será mediante el SDK de Supabase y SQL explícito en
-migraciones.
+El modelo, índices y estrategia de migración están en
+`docs/mongodb-data-model.md`.
 
 ## 7. Autenticación y autorización
 
-Autenticación: Supabase Auth (email + contraseña, recuperación de contraseña y
-cambio obligatorio de contraseña provisoria si se adopta ese mecanismo).
+Autenticación: Auth.js con Credentials Provider, identificador RUT y contraseña.
+La sesión es JWT porque el proveedor Credentials no admite sesiones persistidas
+por adaptador. El detalle está en `docs/authentication.md`.
 
 Roles del MVP:
 
@@ -159,40 +171,39 @@ Roles del MVP:
 Autorización en tres capas:
 
 1. Interfaz: oculta acciones no permitidas, solo como ayuda de experiencia.
-2. Servidor: valida sesión y rol antes de ejecutar server actions o route
-   handlers.
-3. Base de datos: RLS obligatorio en tablas expuestas; restricciones e índices
-   para invariantes de negocio.
+2. Servidor: valida sesión, usuario activo y rol antes de ejecutar server
+   actions o route handlers.
+3. Base de datos: validadores, índices únicos y transacciones refuerzan las
+   invariantes de negocio.
 
-El rol no se confía desde el cliente. Se obtiene del perfil asociado al usuario
-autenticado en el servidor o dentro de políticas RLS.
+El rol incluido en el JWT es una caché para navegación y render. Las operaciones
+sensibles vuelven a consultar `users` para verificar `active` y rol vigentes, de
+modo que una desactivación o cambio de rol no dependa de esperar el vencimiento
+del token. El rol nunca se acepta desde el cuerpo de la petición ni desde el
+cliente.
 
-## 8. Estrategia de seguridad RLS
+## 8. Estrategia de seguridad
 
-Reglas de diseño:
-
-- RLS habilitado en toda tabla expuesta a PostgREST.
-- Política por defecto: denegar. Se habilita explícitamente por rol y operación.
-- Un brigadista solo puede leer y actualizar su propia disponibilidad, y crear
-  su propia respuesta a una convocatoria.
-- Un coordinador puede leer la brigada y gestionar convocatorias y respuestas.
-- Un administrador puede gestionar perfiles, roles y estado activo.
-- Los usuarios desactivados no reciben nuevas convocatorias (RN-07). La
-  condición debe aplicarse en la consulta y en la política, no solo en la UI.
-- Las tablas de historial y notificaciones son de escritura controlada y
-  lectura según rol; no se permite alterar registros históricos desde el cliente.
-- Las políticas RLS se crean en la misma migración que la tabla.
-- Cada política debe tener pruebas de acceso permitido y denegado por rol.
-
-Invariantes que se reforzarán en la base de datos:
-
-- Una sola convocatoria activa (RN-05), mediante índice único parcial o
-  restricción equivalente, no solo validación de interfaz.
-- Una sola respuesta por brigadista y convocatoria.
-- Respuestas cerradas cuando la convocatoria se cierra, según la regla aprobada.
-- Fechas en `timestamptz` y almacenamiento consistente en UTC.
-
-El detalle operativo está en `docs/database-migrations.md`.
+- Denegar por defecto: toda ruta, server action o route handler protegido llama a
+  un helper de autorización antes de acceder a datos.
+- El navegador no tiene acceso directo a MongoDB ni recibe la cadena de conexión.
+- El contenedor local escucha solo en `127.0.0.1:27018`; no se expone a la red
+  local. No contiene datos reales.
+- Los secretos viven solo en `.env.local` y en el entorno del servidor. No se
+  versionan valores reales.
+- Contraseñas con Argon2id; nunca en texto plano, nunca en logs, nunca en la
+  sesión.
+- Errores de login genéricos para no revelar si un RUT existe o está activo.
+- Validación y limitación de intentos de login (rate limiting) antes de exponer
+  el formulario en producción.
+- Registro de auditoría para operaciones administrativas relevantes, sin datos
+  sensibles.
+- Pruebas explícitas de acceso permitido y denegado para cada rol y operación
+  sensible.
+- El usuario de MongoDB en Atlas no es administrador del clúster y solo puede
+  leer/escribir la base de la aplicación.
+- Datos personales limitados a los necesarios. El RUT se trata como dato
+  personal: no se registra completo en logs ni se muestra sin necesidad.
 
 ## 9. PWA
 
@@ -214,8 +225,9 @@ La bandeja interna de convocatorias no dependerá del éxito del push.
 ## 10. Límites de la Etapa 0
 
 - No hay módulos funcionales.
-- No hay autenticación ni sesiones.
-- No hay tablas de negocio ni migraciones aplicadas.
-- No hay conexión a un proyecto Supabase real.
+- No hay autenticación, formulario de login ni sesiones.
+- No hay conexión desde la aplicación a MongoDB ni colecciones creadas.
+- MongoDB local está disponible con Docker (`compose.yaml`) y replica set `rs0`.
+- No hay migraciones aplicadas ni datos reales.
 - No hay notificaciones ni service worker.
 - No hay despliegue.
