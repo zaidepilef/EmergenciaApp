@@ -1,0 +1,12 @@
+node_modules
+.next
+out
+coverage
+build
+package-lock.json
+next-env.d.ts
+supabase/.temp
+public/sw.js
+README.md
+.opencode
+openspec
