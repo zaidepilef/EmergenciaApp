@@ -1,0 +1,15 @@
+# Finales de línea portables (Windows, Linux, macOS).
+# Lo que se ejecuta dentro de contenedores Linux o con psql/sh debe quedar en LF
+# aunque se haga checkout en Windows con core.autocrlf=true.
+*.sh        text eol=lf
+*.bash      text eol=lf
+*.sql       text eol=lf
+Dockerfile  text eol=lf
+*.Dockerfile text eol=lf
+*.conf      text eol=lf
+Caddyfile   text eol=lf
+
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.ico  binary
