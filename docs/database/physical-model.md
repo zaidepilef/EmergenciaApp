@@ -1,12 +1,15 @@
-# Modelo físico — visión general (revisión 2)
+# Modelo físico — visión general (revisión 2.1)
 
-> **Estado: PROPUESTA PARA AUDITORÍA FINAL.** Arquitectura aprobada
-> preliminarmente por el usuario (2026-11-13). **No** hay `schema.prisma`,
-> migraciones ni SQL ejecutado: requieren autorización expresa.
+> **Estado: revisión 2.1, tras implementar.** Arquitectura aprobada por el
+> usuario (2026-11-13). backend-architect tradujo la revisión 2 a
+> `backend/prisma/schema.prisma` y dos migraciones, aplicadas **solo en la base
+> local de Docker** (PostgreSQL 18.7); la auditoría de database-architect la
+> encontró fiel. La revisión 2.1 incorpora los ajustes de esa auditoría sin
+> cambiar decisiones aprobadas.
 >
 > Prevalece sobre `conceptual-model.md`, `logical-model.md` y
-> `failure-scenarios.md` donde haya diferencias. Cambios desde la revisión 1:
-> [review-checklist.md](review-checklist.md).
+> `failure-scenarios.md` donde haya diferencias. Cambios y verificación:
+> [review-checklist.md](review-checklist.md) (§1 revisión 2, §5 revisión 2.1).
 
 ## Documentos
 
@@ -119,18 +122,39 @@ erDiagram
 
 ## 6. Compatibilidad con Prisma
 
-| Elemento                                                                                                           | Prisma                              | SQL manual en la migración |
-| ------------------------------------------------------------------------------------------------------------------ | ----------------------------------- | -------------------------- |
-| Tablas, columnas, enums, FK, únicos compuestos, `jsonb`, `BigInt`                                                  | Sí                                  | —                          |
-| `DEFAULT uuidv7()`                                                                                                 | `@default(dbgenerated("uuidv7()"))` | —                          |
-| Relaciones circulares (`emergency_recipient` ↔ `emergency_response`, `brigadista_profile` ↔ `availability_change`) | Sí, con relaciones con nombre       | —                          |
-| Índices únicos parciales y sobre expresiones (`lower(email)`)                                                      | Verificar en la versión elegida     | Si no lo soporta           |
-| `CHECK`, triggers, secuencia `CACHE 1`, candado                                                                    | No                                  | Sí                         |
-| Permisos del rol de la aplicación                                                                                  | No                                  | Sí (o script de devops)    |
+| Elemento                                                                                                           | Prisma                                                                       | SQL manual en la migración             |
+| ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- | -------------------------------------- |
+| Tablas, columnas, enums, FK, únicos compuestos, `jsonb`, `BigInt`                                                  | Sí                                                                           | —                                      |
+| `DEFAULT uuidv7()`                                                                                                 | `@default(dbgenerated("uuidv7()"))`                                          | —                                      |
+| Relaciones circulares (`emergency_recipient` ↔ `emergency_response`, `brigadista_profile` ↔ `availability_change`) | Sí, con relaciones con nombre                                                | —                                      |
+| Índices parciales (9, únicos o no)                                                                                 | No se declaran (sin preview `partialIndexes`); Prisma los ignora al comparar | Sí, solo SQL de la migración           |
+| Correo único sin distinguir mayúsculas                                                                             | Único simple sobre `email`                                                   | `CHECK (email = lower(email))`         |
+| Únicos de invariantes 1:1 (`last_availability_change_id`, `current_response_id`, `notice_ack.operation_id`)        | Sí (exigidos por relaciones 1:1)                                             | —                                      |
+| `row_version`                                                                                                      | `@default(0)` solo para insertar                                             | Trigger + `CHECK (row_version > 0)`    |
+| `updated_at`                                                                                                       | `@default(now())`, **sin** `@updatedAt`                                      | Trigger `touch_updated_at`             |
+| `CHECK`, triggers, secuencia `CACHE 1`, candado                                                                    | No                                                                           | Sí                                     |
+| Permisos del rol de la aplicación                                                                                  | No                                                                           | Script de devops-architect (pendiente) |
+
+Versión usada: Prisma 7.10.1. Detalle de la implementación:
+`backend/prisma/README.md`.
+
+**Índices parciales.** Con el preview `partialIndexes`, Prisma comparaba el
+texto del predicado y PostgreSQL lo guarda reescrito (`IN (...)` pasa a
+`= ANY (ARRAY[...])`), así que cada `migrate diff` proponía borrarlos y
+recrearlos. Sin el preview, Prisma no los declara ni los toca: existen solo en
+el SQL de las migraciones (y como comentario en el modelo de `schema.prisma`).
+Un índice parcial nuevo se agrega a mano en una migración nueva; database-architect
+lo revisa en el SQL, no en `schema.prisma`.
+
+**`updated_at`.** Lo pone siempre el servidor de base de datos (`DEFAULT now()`
+y `touch_updated_at`). Sin `@updatedAt`, el reloj de la aplicación no interviene
+y no hay dos fuentes para el mismo dato.
 
 ## 7. Fuera del alcance de esta misión
 
-- `schema.prisma`, migraciones y ejecución de SQL: **esperan autorización expresa**.
+- `schema.prisma`, migraciones y su ejecución: los escribe y aplica
+  backend-architect (database-architect diseña y revisa). Cualquier entorno
+  distinto de la base local requiere autorización expresa.
 - Contrato HTTP de sincronización: backend-architect + mobile-architect.
 - Tiempos de re-aviso, vida del token de acceso y plazo de la contraseña
   provisoria: backend-architect (valores sugeridos en `security.md` y

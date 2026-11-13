@@ -1,10 +1,15 @@
-# PostgreSQL — DDL de referencia (revisión 2)
+# PostgreSQL — DDL de referencia (revisión 2.1)
 
-> **PROPUESTA PARA AUDITORÍA. No es una migración** y no debe ejecutarse. Se
-> traducirá a `schema.prisma` + SQL manual solo con autorización expresa del
-> usuario. PostgreSQL 18. Fechas en UTC (`timestamptz(3)`).
+> **DDL de referencia del diseño. No es una migración** y no debe ejecutarse.
+> Lo ejecutable es `backend/prisma/schema.prisma` + `backend/prisma/migrations/`
+> (backend-architect), aplicado hasta ahora **solo en la base local de Docker**
+> (PostgreSQL 18.7). PostgreSQL 18. Fechas en UTC (`timestamptz(3)`).
 >
-> Cambios respecto de la revisión 1: ver [`../review-checklist.md`](../review-checklist.md).
+> La revisión 2.1 no cambia decisiones aprobadas: incorpora los ajustes de la
+> auditoría de la implementación (H2–H7) y dos decisiones de implementación de
+> backend-architect (índices parciales solo en SQL manual; `updated_at` solo por
+> trigger). Detalle y verificación: [`../review-checklist.md`](../review-checklist.md)
+> §5. Cambios respecto de la revisión 1: mismo documento, §1.
 
 ## 1. Enumeraciones
 
@@ -63,8 +68,28 @@ END $$;
 | Trigger                                     | Tablas                                                                                                                                                      |
 | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `set_row_version` `BEFORE INSERT OR UPDATE` | `app_user`, `brigadista_profile`, `availability_change`, `emergency`, `emergency_notice`, `emergency_recipient`, `emergency_response`                       |
-| `touch_updated_at` `BEFORE UPDATE`          | Tablas con `updated_at`                                                                                                                                     |
+| `touch_updated_at` `BEFORE UPDATE`          | Tablas con `updated_at`: `app_user`, `device`, `brigadista_profile`, `emergency`, `emergency_recipient`, `notification_delivery`                            |
 | `forbid_mutation` `BEFORE UPDATE OR DELETE` | `availability_change`, `emergency_notice`, `emergency_response`, `notice_ack`, `manual_contact`, `sync_operation`, `sync_operation_resolution`, `audit_log` |
+
+Reglas de la revisión 2.1:
+
+- **`row_version`**: en Prisma tiene `@default(0)` solo para que no se exija al
+  insertar; el trigger siempre lo sobrescribe con `nextval` (≥ 1). Cada tabla
+  replicada lleva `CHECK (row_version > 0)` (H7): si una tabla quedara sin
+  trigger, la escritura falla en vez de guardar filas con versión 0, invisibles
+  para la descarga.
+- **`updated_at`**: `DEFAULT now()` al insertar y `touch_updated_at` al
+  actualizar. Es la **única** fuente: sin `@updatedAt` de Prisma, para que la
+  hora sea siempre la del servidor de base de datos y no la del reloj de la
+  aplicación.
+- **Índices parciales** (los 9 con `WHERE` de este documento): viven **solo en
+  el SQL de las migraciones**. Prisma no los declara (sin el preview
+  `partialIndexes`) y los ignora al comparar, así que no generan deriva. Uno
+  nuevo se agrega a mano en una migración nueva.
+- **`app_user` y el candado (H9)**: hay una propuesta para que `set_row_version`
+  en `app_user` solo actúe cuando cambian columnas replicadas
+  (`../review-checklist.md` §5.4). Hasta que se apruebe e implemente, rige el
+  trigger de la tabla de arriba.
 
 Permisos del rol de la aplicación: sin `DELETE` en ninguna tabla salvo
 `user_role`; sin `UPDATE` en las tablas append-only. Es una segunda barrera
@@ -78,7 +103,7 @@ CREATE TABLE app_user (
   rut                  text NOT NULL UNIQUE,            -- canónico 12345678-5
   password_hash        text NOT NULL,                   -- Argon2id
   full_name            text NOT NULL,
-  email                text,
+  email                text,                            -- siempre en minúsculas (H2)
   active               boolean NOT NULL DEFAULT true,
   must_change_password boolean NOT NULL DEFAULT true,
   password_expires_at  timestamptz(3),                  -- vencimiento de la contraseña provisoria
@@ -89,12 +114,19 @@ CREATE TABLE app_user (
   deactivated_by       uuid REFERENCES app_user (id) ON DELETE RESTRICT,
   created_at           timestamptz(3) NOT NULL DEFAULT now(),
   updated_at           timestamptz(3) NOT NULL DEFAULT now(),
-  row_version          bigint NOT NULL,
-  CONSTRAINT app_user_rut_format_chk CHECK (rut ~ '^[1-9][0-9]{0,7}-[0-9K]$'),  -- el DV lo valida el backend
+  row_version          bigint NOT NULL CHECK (row_version > 0),
+  -- Solo formato. El dígito verificador lo valida packages/shared/ en el backend
+  -- (decisión de la revisión 2.1, ver review-checklist.md §5.5).
+  CONSTRAINT app_user_rut_format_chk CHECK (rut ~ '^[1-9][0-9]{0,7}-[0-9K]$'),
+  CONSTRAINT app_user_email_lower_chk CHECK (email IS NULL OR email = lower(email)),
   CONSTRAINT app_user_deactivation_chk CHECK (active = (deactivated_at IS NULL)),
   CONSTRAINT app_user_provisional_chk CHECK (must_change_password = (password_expires_at IS NOT NULL))
 );
-CREATE UNIQUE INDEX app_user_email_uq ON app_user (lower(email)) WHERE email IS NOT NULL;
+-- H2: único simple + CHECK de minúsculas en vez de índice sobre lower(email).
+-- Equivalente: con todo correo en minúsculas, único sobre email = único sobre
+-- lower(email), y varios NULL no chocan (NULLS DISTINCT). El backend aplica
+-- lower() al escribir y al buscar.
+CREATE UNIQUE INDEX app_user_email_key ON app_user (email);
 CREATE INDEX app_user_sync_idx ON app_user (row_version);
 
 -- Permisos (Q1), independientes de la condición de brigadista.
@@ -118,15 +150,18 @@ CREATE TABLE device (
   push_token_updated_at timestamptz(3),
   app_version           text,
   os_version            text,
-  last_device_seq       bigint NOT NULL DEFAULT 0,
+  last_device_seq       bigint NOT NULL DEFAULT 0,      -- CHECK device_last_seq_chk (H6)
   last_clock_offset_ms  integer,
   last_seen_at          timestamptz(3),
   revoked_at            timestamptz(3),
   created_at            timestamptz(3) NOT NULL DEFAULT now(),
   updated_at            timestamptz(3) NOT NULL DEFAULT now(),
-  CONSTRAINT device_token_status_chk CHECK ((push_token IS NULL) = (push_token_status IS NULL))
+  CONSTRAINT device_token_status_chk CHECK ((push_token IS NULL) = (push_token_status IS NULL)),
+  CONSTRAINT device_last_seq_chk CHECK (last_device_seq >= 0)
 );
-CREATE UNIQUE INDEX device_push_token_uq ON device (push_token) WHERE push_token IS NOT NULL;
+-- H3: sin predicado. Equivale al parcial WHERE push_token IS NOT NULL porque
+-- los NULL no chocan entre sí (NULLS DISTINCT, comportamiento por defecto).
+CREATE UNIQUE INDEX device_push_token_uq ON device (push_token);
 CREATE INDEX device_user_idx ON device (user_id) WHERE revoked_at IS NULL;
 
 CREATE TABLE auth_session (
@@ -146,7 +181,11 @@ CREATE TABLE auth_session (
   revoked_reason     text,
   CONSTRAINT auth_session_device_chk CHECK (client_type <> 'MOBILE' OR device_id IS NOT NULL),
   CONSTRAINT auth_session_expiry_chk CHECK (expires_at > created_at),
-  CONSTRAINT auth_session_revoked_chk CHECK ((revoked_at IS NULL) = (revoked_reason IS NULL))
+  CONSTRAINT auth_session_revoked_chk CHECK ((revoked_at IS NULL) = (revoked_reason IS NULL)),
+  -- H6: los 8 motivos de security.md.
+  CONSTRAINT auth_session_reason_chk CHECK (revoked_reason IS NULL OR revoked_reason IN
+    ('LOGOUT', 'ROTATED', 'PASSWORD_RESET', 'PASSWORD_CHANGED', 'ACCOUNT_DEACTIVATED',
+     'DEVICE_REVOKED', 'REUSE_DETECTED', 'EXPIRED'))
 );
 CREATE INDEX auth_session_user_active_idx ON auth_session (user_id) WHERE revoked_at IS NULL;
 CREATE INDEX auth_session_family_idx ON auth_session (family_id);
@@ -164,12 +203,12 @@ CREATE TABLE brigadista_profile (
   phone                       text,
   availability_status         availability_status NOT NULL DEFAULT 'NO_DISPONIBLE',
   availability_declared_at    timestamptz(3) NOT NULL,
-  last_availability_change_id uuid,                           -- FK abajo
+  last_availability_change_id uuid UNIQUE,                    -- FK abajo; único (H4)
   joined_at                   timestamptz(3) NOT NULL DEFAULT now(),
   left_at                     timestamptz(3),
   created_at                  timestamptz(3) NOT NULL DEFAULT now(),
   updated_at                  timestamptz(3) NOT NULL DEFAULT now(),
-  row_version                 bigint NOT NULL,
+  row_version                 bigint NOT NULL CHECK (row_version > 0),
   CONSTRAINT brigadista_left_chk CHECK (active = (left_at IS NULL))
 );
 CREATE INDEX brigadista_panel_idx ON brigadista_profile (availability_status, availability_declared_at) WHERE active;
@@ -189,7 +228,7 @@ CREATE TABLE availability_change (
   base_row_version bigint,
   created_offline  boolean NOT NULL DEFAULT false,
   sync_result      sync_result NOT NULL,              -- fijado al insertar; nunca cambia
-  row_version      bigint NOT NULL,
+  row_version      bigint NOT NULL CHECK (row_version > 0),
   CONSTRAINT availability_source_chk CHECK (source <> 'COORDINATOR_PROXY'),
   CONSTRAINT availability_app_chk CHECK (source <> 'APP' OR (device_id IS NOT NULL AND device_seq IS NOT NULL)),
   CONSTRAINT availability_result_chk CHECK (sync_result <> 'REJECTED'),
@@ -221,7 +260,7 @@ CREATE TABLE emergency (
   deleted_at     timestamptz(3),
   created_at     timestamptz(3) NOT NULL DEFAULT now(),
   updated_at     timestamptz(3) NOT NULL DEFAULT now(),
-  row_version    bigint NOT NULL,
+  row_version    bigint NOT NULL CHECK (row_version > 0),
   CONSTRAINT emergency_activation_chk CHECK ((status = 'DRAFT') = (activated_at IS NULL)),
   CONSTRAINT emergency_activated_by_chk CHECK ((activated_at IS NULL) = (activated_by IS NULL)),
   CONSTRAINT emergency_closed_chk CHECK ((status = 'CLOSED') = (closed_at IS NOT NULL)),
@@ -241,7 +280,7 @@ CREATE TABLE emergency_notice (
   message      text,
   created_by   uuid NOT NULL REFERENCES app_user (id) ON DELETE RESTRICT,
   created_at   timestamptz(3) NOT NULL DEFAULT now(),
-  row_version  bigint NOT NULL
+  row_version  bigint NOT NULL CHECK (row_version > 0)
 );
 CREATE INDEX emergency_notice_idx ON emergency_notice (emergency_id, created_at);
 CREATE INDEX emergency_notice_sync_idx ON emergency_notice (row_version);
@@ -255,10 +294,10 @@ CREATE TABLE emergency_recipient (
   added_by            uuid REFERENCES app_user (id) ON DELETE RESTRICT,
   convoked_at         timestamptz(3) NOT NULL DEFAULT now(),
   current_response    response_value,                 -- NULL = pendiente
-  current_response_id uuid,                           -- FK abajo
+  current_response_id uuid UNIQUE,                    -- FK abajo; único (H4)
   responded_at        timestamptz(3),
   updated_at          timestamptz(3) NOT NULL DEFAULT now(),
-  row_version         bigint NOT NULL,
+  row_version         bigint NOT NULL CHECK (row_version > 0),
   CONSTRAINT recipient_once_uq UNIQUE (emergency_id, brigadista_id),
   CONSTRAINT recipient_response_chk CHECK (
     (current_response IS NULL) = (current_response_id IS NULL)
@@ -286,7 +325,7 @@ CREATE TABLE emergency_response (
   late_sync_after_close boolean NOT NULL DEFAULT false,
   sync_result           sync_result NOT NULL,
   corrects_operation_id uuid,                          -- si corrige un conflicto o rechazo (FK abajo)
-  row_version           bigint NOT NULL,
+  row_version           bigint NOT NULL CHECK (row_version > 0),
   CONSTRAINT response_proxy_chk CHECK (
     source <> 'COORDINATOR_PROXY'
     OR (recorded_by IS NOT NULL AND channel <> 'APP' AND time_confidence = 'HUMAN_DECLARED')),
@@ -347,7 +386,7 @@ CREATE TABLE notice_ack (
   via             ack_via,                             -- cómo llegó (solo RECEIVED)
   acked_at_device timestamptz(3) NOT NULL,
   received_at     timestamptz(3) NOT NULL DEFAULT now(),
-  operation_id    uuid NOT NULL,                       -- FK abajo
+  operation_id    uuid NOT NULL UNIQUE,                -- FK abajo; una operación origina a lo sumo un acuse (H4)
   CONSTRAINT notice_ack_once_uq UNIQUE (notice_id, recipient_id, device_id, level),
   CONSTRAINT notice_ack_via_chk CHECK ((level = 'RECEIVED') = (via IS NOT NULL))
 );
@@ -403,6 +442,8 @@ CREATE TABLE sync_operation_resolution (
   CONSTRAINT resolution_correction_chk CHECK ((action = 'CORRECTED') = (corrective_response_id IS NOT NULL)),
   CONSTRAINT resolution_note_chk CHECK (action <> 'NOTE' OR note IS NOT NULL)
 );
+-- H5: todas las resoluciones de una operación, incluidas las notas.
+CREATE INDEX resolution_operation_idx ON sync_operation_resolution (operation_id);
 -- A lo sumo una resolución final por operación; las notas son ilimitadas.
 CREATE UNIQUE INDEX resolution_final_uq ON sync_operation_resolution (operation_id) WHERE action <> 'NOTE';
 
