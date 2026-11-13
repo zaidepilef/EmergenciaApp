@@ -2,16 +2,27 @@
   "name": "brigada-emergencias-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "API de EmergenciaApp. Por ahora solo contiene el esquema Prisma y las migraciones.",
+  "type": "module",
+  "description": "API de EmergenciaApp. Por ahora contiene el esquema Prisma, las migraciones y las pruebas de integración de la base.",
   "engines": {
     "node": ">=24.0.0"
   },
   "scripts": {
     "prisma:format": "prisma format",
     "prisma:validate": "prisma validate",
-    "prisma:diff": "prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script"
+    "prisma:diff": "prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script",
+    "db:up": "docker compose -f ../compose.yaml up -d --wait postgres",
+    "db:stop": "docker compose -f ../compose.yaml stop postgres",
+    "db:migrate": "prisma migrate deploy",
+    "db:status": "prisma migrate status",
+    "db:drift": "prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code",
+    "db:reset": "prisma migrate reset --force",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "devDependencies": {
-    "prisma": "7.10.1"
+    "@types/pg": "8.23.1",
+    "pg": "8.23.1",
+    "prisma": "7.10.1",
+    "vitest": "5.0.5"
   }
 }

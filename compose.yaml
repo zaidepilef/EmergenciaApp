@@ -32,5 +32,29 @@ services:
       retries: 30
       start_period: 10s
 
+  # PostgreSQL 18 para desarrollo y pruebas LOCALES del backend
+  # (ver backend/README.md). Credenciales solo de desarrollo: nunca en producción.
+  # El script de init crea además las bases emergencia_test y emergencia_shadow.
+  postgres:
+    image: postgres:18.7
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-emergencia_dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_only_local_password}
+      POSTGRES_DB: ${POSTGRES_DB:-emergencia_dev}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      # Desde PostgreSQL 18 la imagen guarda los datos bajo /var/lib/postgresql/18.
+      - postgres_data:/var/lib/postgresql
+      - ./backend/docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
 volumes:
   mongo_data:
+  postgres_data:

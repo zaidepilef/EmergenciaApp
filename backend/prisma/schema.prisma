@@ -9,11 +9,10 @@
 // fechas timestamptz(3) en UTC; claves UUID v7.
 
 generator client {
-  provider        = "prisma-client"
-  output          = "../src/generated/prisma"
-  // Preview: índices parciales. Si no estuvieran en el schema, Prisma Migrate
-  // intentaría borrarlos en la siguiente migración. Ver prisma/README.md.
-  previewFeatures = ["partialIndexes"]
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+  // Sin previewFeatures: los índices parciales viven solo como SQL de la
+  // migración (ver prisma/README.md, "Índices parciales").
 }
 
 datasource db {
@@ -199,7 +198,7 @@ model AppUser {
   deactivatedAt      DateTime? @map("deactivated_at") @db.Timestamptz(3)
   deactivatedById    String?   @map("deactivated_by") @db.Uuid
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedAt          DateTime  @default(now()) @map("updated_at") @db.Timestamptz(3)
   rowVersion         BigInt    @default(0) @map("row_version")
 
   deactivatedBy    AppUser?  @relation("UserDeactivatedBy", fields: [deactivatedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
@@ -256,7 +255,7 @@ model Device {
   lastSeenAt         DateTime?        @map("last_seen_at") @db.Timestamptz(3)
   revokedAt          DateTime?        @map("revoked_at") @db.Timestamptz(3)
   createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt          DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedAt          DateTime         @default(now()) @map("updated_at") @db.Timestamptz(3)
 
   user                AppUser                @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   sessions            AuthSession[]
@@ -266,7 +265,7 @@ model Device {
   acks                NoticeAck[]
   syncOperations      SyncOperation[]
 
-  @@index([userId], map: "device_user_idx", where: raw("revoked_at IS NULL"))
+  // Índice parcial "device_user_idx" [userId] WHERE revoked_at IS NULL (solo en SQL de la migración).
   @@map("device")
 }
 
@@ -292,7 +291,7 @@ model AuthSession {
   replacedBy AuthSession?  @relation("SessionRotation", fields: [replacedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
   replaces   AuthSession[] @relation("SessionRotation")
 
-  @@index([userId], map: "auth_session_user_active_idx", where: raw("revoked_at IS NULL"))
+  // Índice parcial "auth_session_user_active_idx" [userId] WHERE revoked_at IS NULL (solo en SQL de la migración).
   @@index([familyId], map: "auth_session_family_idx")
   @@map("auth_session")
 }
@@ -311,7 +310,7 @@ model BrigadistaProfile {
   joinedAt                 DateTime           @default(now()) @map("joined_at") @db.Timestamptz(3)
   leftAt                   DateTime?          @map("left_at") @db.Timestamptz(3)
   createdAt                DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt                DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedAt                DateTime           @default(now()) @map("updated_at") @db.Timestamptz(3)
   rowVersion               BigInt             @default(0) @map("row_version")
 
   user                   AppUser              @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
@@ -319,7 +318,7 @@ model BrigadistaProfile {
   availabilityChanges    AvailabilityChange[] @relation("ProfileAvailabilityHistory")
   recipients             EmergencyRecipient[]
 
-  @@index([availabilityStatus, availabilityDeclaredAt], map: "brigadista_panel_idx", where: raw("active"))
+  // Índice parcial "brigadista_panel_idx" [availabilityStatus, availabilityDeclaredAt] WHERE active (solo en SQL de la migración).
   @@index([rowVersion], map: "brigadista_profile_sync_idx")
   @@map("brigadista_profile")
 }
@@ -366,7 +365,7 @@ model Emergency {
   closedAt      DateTime?       @map("closed_at") @db.Timestamptz(3)
   deletedAt     DateTime?       @map("deleted_at") @db.Timestamptz(3)
   createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt     DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedAt     DateTime        @default(now()) @map("updated_at") @db.Timestamptz(3)
   rowVersion    BigInt          @default(0) @map("row_version")
 
   createdBy   AppUser  @relation("EmergencyCreatedBy", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
@@ -377,9 +376,9 @@ model Emergency {
   recipients EmergencyRecipient[]
 
   // P1: a lo sumo una convocatoria activa.
-  @@unique([status], map: "emergency_one_active_uq", where: raw("status = 'ACTIVE'"))
-  @@index([createdAt(sort: Desc)], map: "emergency_recent_idx", where: raw("deleted_at IS NULL"))
-  @@index([rowVersion], map: "emergency_sync_idx", where: raw("status <> 'DRAFT'"))
+  // Índice parcial único "emergency_one_active_uq" [status] WHERE status = 'ACTIVE' (solo en SQL de la migración).
+  // Índice parcial "emergency_recent_idx" [createdAt(sort: Desc)] WHERE deleted_at IS NULL (solo en SQL de la migración).
+  // Índice parcial "emergency_sync_idx" [rowVersion] WHERE status <> 'DRAFT' (solo en SQL de la migración).
   @@map("emergency")
 }
 
@@ -414,7 +413,7 @@ model EmergencyRecipient {
   currentResponse   ResponseValue?  @map("current_response")
   currentResponseId String?         @unique(map: "emergency_recipient_current_response_key") @map("current_response_id") @db.Uuid
   respondedAt       DateTime?       @map("responded_at") @db.Timestamptz(3)
-  updatedAt         DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedAt         DateTime        @default(now()) @map("updated_at") @db.Timestamptz(3)
   rowVersion        BigInt          @default(0) @map("row_version")
 
   emergency          Emergency          @relation(fields: [emergencyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
@@ -485,14 +484,14 @@ model NotificationDelivery {
   failedAt            DateTime?       @map("failed_at") @db.Timestamptz(3)
   providerMessageId   String?         @map("provider_message_id")
   lastErrorCode       String?         @map("last_error_code")
-  updatedAt           DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  updatedAt           DateTime        @default(now()) @map("updated_at") @db.Timestamptz(3)
 
   notice    EmergencyNotice    @relation(fields: [noticeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   recipient EmergencyRecipient @relation(fields: [recipientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   device    Device             @relation(fields: [deviceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([noticeId, recipientId, channel, deviceId], map: "delivery_once_uq")
-  @@index([nextAttemptAt], map: "delivery_retry_idx", where: raw("status IN ('QUEUED', 'SENT', 'PROVIDER_ACCEPTED')"))
+  // Índice parcial "delivery_retry_idx" [nextAttemptAt] WHERE status IN ('QUEUED', 'SENT', 'PROVIDER_ACCEPTED') (solo en SQL de la migración).
   @@map("notification_delivery")
 }
 
@@ -559,7 +558,7 @@ model SyncOperation {
   corrections EmergencyResponse[]       @relation("ResponseCorrects")
 
   @@unique([deviceId, deviceSeq], map: "sync_operation_seq_uq")
-  @@index([receivedAt], map: "sync_operation_review_idx", where: raw("result IN ('CONFLICT', 'REJECTED')"))
+  // Índice parcial "sync_operation_review_idx" [receivedAt] WHERE result IN ('CONFLICT', 'REJECTED') (solo en SQL de la migración).
   @@map("sync_operation")
 }
 
@@ -578,7 +577,7 @@ model SyncOperationResolution {
   correctiveResponse EmergencyResponse? @relation(fields: [correctiveResponseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   // A lo sumo una resolución final por operación; las notas son ilimitadas.
-  @@unique([operationId], map: "resolution_final_uq", where: raw("action <> 'NOTE'"))
+  // Índice parcial único "resolution_final_uq" [operationId] WHERE action <> 'NOTE' (solo en SQL de la migración).
   @@index([operationId], map: "resolution_operation_idx")
   @@map("sync_operation_resolution")
 }
