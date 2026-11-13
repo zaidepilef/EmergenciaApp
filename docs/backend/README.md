@@ -36,6 +36,6 @@
 |---|---|
 | mobile-architect | Contrato de sync (forma de las operaciones, reloj monotónico, tamaño de lote), registro del dispositivo y del token push, Expo Push vs. FCM/APNs directo |
 | web-architect | Endpoints del dashboard, flujo del BFF (login, renovación, cierre), `ETag` del polling |
-| database-architect | Revisión de las transacciones de [`sync-contract.md`](sync-contract.md) §4 , del orden de candados (incluido el login) y de la colisión de `device_seq` (§2.4) |
+| database-architect | Revisión de las transacciones de [`sync-contract.md`](sync-contract.md) §4, del orden de candados (incluido el login) y de la colisión de `device_seq` (§2.4) |
 | devops-architect | Dos procesos (API y worker) desde una imagen, variables de entorno, healthchecks |
 | ui-ux-designer | Mensajes de error visibles por código, tiempos del re-aviso (2, 5 y 10 min propuestos) |
