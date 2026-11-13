@@ -85,9 +85,11 @@ Desempate dentro de la ventana:
 | Respuesta: app frente a coordinador           | **Gana la del propio brigadista (`APP`)**: es información de primera mano |
 | Respuesta: dos teléfonos del mismo brigadista | La de mayor `received_at`                                                 |
 
-Un `CONFLICT` deja `sync_operation.resolution_status = 'PENDING_REVIEW'`. El
-coordinador lo ve en el panel y puede confirmarlo o corregirlo; corregir genera
-**una nueva** respuesta registrada por él, nunca modifica la anterior.
+Un `CONFLICT` queda **pendiente de revisión** mientras no tenga una resolución
+final en `sync_operation_resolution`. El coordinador lo ve en el panel y lo
+resuelve con un **evento separado**: `CONFIRMED`, `DISMISSED` o `CORRECTED`
+(que crea **una nueva** respuesta `COORDINATOR_PROXY` con `corrects_operation_id`).
+La operación original y la respuesta original nunca se modifican.
 
 ### Respuestas y cierre de la convocatoria (Q3)
 
@@ -115,6 +117,6 @@ la reemplaza en la siguiente descarga.
 | `ACCOUNT_INACTIVE` | Cuenta o perfil desactivado    | "Tu cuenta no está activa" y cierre de sesión                                         |
 | `INVALID_PAYLOAD`  | Datos inválidos                | Error técnico, se reporta                                                             |
 
-Todo rechazo queda en `sync_operation` con su payload y
-`resolution_status = 'PENDING_REVIEW'` (punto 4), y en el teléfono como
-`REJECTED` hasta que el usuario lo vea.
+Todo rechazo queda en `sync_operation` con su payload, inmutable, y pendiente de
+revisión hasta que exista una resolución final en `sync_operation_resolution`.
+En el teléfono queda `REJECTED` hasta que el usuario lo vea.

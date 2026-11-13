@@ -54,10 +54,11 @@ fue 10, lo registra (falta la 11) sin bloquear; la 11 puede llegar después.
   `sync_status = 'REJECTED'`. La app lo muestra con el motivo hasta que el
   usuario lo confirma (`REJECTED_ACKNOWLEDGED`), y lo conserva 30 días más.
   Nunca se elimina sin que el usuario lo haya visto.
-- **Servidor:** `sync_operation` guarda payload, motivo y
-  `resolution_status = 'PENDING_REVIEW'`. El coordinador lo resuelve (por ejemplo,
-  registrando la respuesta a nombre del brigadista) y queda `RESOLVED` con autor,
-  fecha y nota. No se borra (Q8).
+- **Servidor:** `sync_operation` guarda la operación original con payload y
+  motivo, y **nunca se modifica**. El coordinador la resuelve agregando un evento
+  en `sync_operation_resolution` (`NOTE`, `CONFIRMED`, `CORRECTED` o
+  `DISMISSED`) con autor, fecha y nota. Una corrección crea una respuesta nueva
+  registrada por él. Nada se borra (Q8).
 - Un rechazo **no** reintenta automáticamente: repetirlo daría el mismo resultado.
 
 ## 5. Limpieza local (Q9 y punto 6)

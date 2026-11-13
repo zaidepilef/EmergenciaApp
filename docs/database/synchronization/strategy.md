@@ -75,11 +75,11 @@ la fecha del teléfono porque refleja la intención del usuario.
 El acuse es **por aviso** (`emergency_notice`): activación, actualización,
 cierre o reapertura. Ver [`failure-scenarios.md`](../failure-scenarios.md).
 
-- Al recibir un push o al ver la convocatoria por primera vez en la bandeja, la
-  app encola `ACK_RECIPIENT`.
-- El servidor fija `emergency_recipient.first_seen_at` y, si vino por push,
-  `notification_delivery.device_received_at`.
-- La interfaz y el panel **solo** muestran "recibida" cuando existe ese acuse.
+- Reemplazado en la revisión 2 por
+  [`delivery-and-ack.md`](delivery-and-ack.md): acuses `RECEIVED` (vía `PUSH` o
+  `SYNC`) y `OPENED` en `notice_ack`, separados de la entrega del proveedor.
+- La interfaz y el panel **solo** muestran "recibida" cuando existe un acuse del
+  teléfono.
 
 ## 6. Recuperación
 

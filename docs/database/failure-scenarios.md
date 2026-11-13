@@ -1,6 +1,9 @@
 # Escenarios de falla — prueba de estrés del modelo
 
-> **Estado: PROPUESTA PRELIMINAR — pendiente de aprobación.**
+> **Estado: revisado.** P1–P4 decididos por el usuario (2026-11-13): una sola
+> convocatoria activa, **sin control de presencia en el MVP**, sin SMS, varios
+> coordinadores. El detalle vigente de tablas está en
+> [`physical-model.md`](physical-model.md); donde difiera, prevalece ese documento.
 > Supuesto de partida: **todo lo que puede fallar, falla durante un incendio**.
 > El sistema no puede garantizar que alguien se entere; sí puede garantizar que el
 > coordinador **sepa a quién no le llegó** y que **ningún dato se pierda**.
@@ -55,8 +58,8 @@ Tres preguntas que el panel debe poder responder en todo momento:
 `notification_delivery` pasa a referenciar **`notice_id`** además de
 `recipient_id`: U (`notice_id`, `recipient_id`, `channel`, `device_id`).
 El acuse (`ACK`) del teléfono también es por aviso: `notice_ack` (notice_id,
-recipient_id, acked_at, received_at). `emergency_recipient.first_seen_at` se
-mantiene como resumen del primer acuse.
+recipient_id, acked_at, received_at). (Revisión 2: `first_seen_at` se
+eliminó; el acuse vive solo en `notice_ack`.)
 
 ### Cambios en `emergency_recipient`
 
@@ -88,7 +91,7 @@ mantiene como resumen del primer acuse.
 | recorded_at  | timestamp       | NN                                      |
 | note         | text            | Opcional, sin datos sensibles           |
 
-### Nuevo (si se aprueba P2): `emergency_attendance` — presencia en terreno
+### ~~`emergency_attendance`~~ — presencia en terreno (**excluida del MVP**, P2)
 
 | Columna      | Tipo             | Reglas                       |
 | ------------ | ---------------- | ---------------------------- |

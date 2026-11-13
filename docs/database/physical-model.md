@@ -1,80 +1,82 @@
-# Modelo físico — visión general
+# Modelo físico — visión general (revisión 2)
 
-> **Estado: PROPUESTA PARA REVISIÓN.** Define tablas, relaciones, restricciones,
-> índices y mecanismos de sincronización. **No** hay migraciones ni
-> `schema.prisma`: el usuario los autoriza después de revisar este documento.
+> **Estado: PROPUESTA PARA AUDITORÍA FINAL.** Arquitectura aprobada
+> preliminarmente por el usuario (2026-11-13). **No** hay `schema.prisma`,
+> migraciones ni SQL ejecutado: requieren autorización expresa.
 >
 > Prevalece sobre `conceptual-model.md`, `logical-model.md` y
-> `failure-scenarios.md` donde haya diferencias.
+> `failure-scenarios.md` donde haya diferencias. Cambios desde la revisión 1:
+> [review-checklist.md](review-checklist.md).
 
 ## Documentos
 
-| Documento                                                                        | Contenido                                                           |
-| -------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| [postgresql/schema.md](postgresql/schema.md)                                     | DDL de referencia del servidor                                      |
-| [sqlite/schema.md](sqlite/schema.md)                                             | DDL de referencia del teléfono                                      |
-| [synchronization/conflict-resolution.md](synchronization/conflict-resolution.md) | Tiempo, orden y conflictos sin depender solo del reloj del teléfono |
-| [synchronization/offline-storage.md](synchronization/offline-storage.md)         | Cola local, operaciones rechazadas, limpieza y recuperación         |
-| [synchronization/strategy.md](synchronization/strategy.md)                       | Flujo general de envío y recepción                                  |
-
-El DDL está escrito para revisión. Al aprobarse, backend-architect lo traduce a
-`schema.prisma` + SQL manual de Prisma Migrate, y mobile-architect a las
-migraciones de la app.
+| Documento                                                                        | Contenido                                                       |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| [postgresql/schema.md](postgresql/schema.md)                                     | DDL de referencia del servidor (17 tablas)                      |
+| [sqlite/schema.md](sqlite/schema.md)                                             | DDL de referencia del teléfono (11 tablas)                      |
+| [synchronization/versioning.md](synchronization/versioning.md)                   | Demostración del orden de `row_version` y protocolo de descarga |
+| [synchronization/conflict-resolution.md](synchronization/conflict-resolution.md) | Tiempo, orden y conflictos sin depender solo del reloj          |
+| [synchronization/offline-storage.md](synchronization/offline-storage.md)         | Cola local, rechazos, limpieza y recuperación                   |
+| [synchronization/delivery-and-ack.md](synchronization/delivery-and-ack.md)       | Bandeja, entrega push y acuse como hechos separados             |
+| [security.md](security.md)                                                       | Contraseñas provisorias, revocación de sesiones, clasificación  |
+| [synchronization/strategy.md](synchronization/strategy.md)                       | Flujo general de envío y recepción                              |
 
 ## 1. Decisiones aplicadas
 
-| #   | Decisión                                                                                                                                               | Fuente                                      | Cómo queda en el modelo                                                                                                                                                                           |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Q1  | Un coordinador también puede ser brigadista. Permisos y condición de brigadista son independientes                                                     | Usuario                                     | `user_role` (solo `ADMINISTRADOR`, `COORDINADOR`, varios por usuario) **separado** de `brigadista_profile` (con su propio `active`). Convocados = cuenta activa **y** perfil de brigadista activo |
-| Q2  | Reconfirmar cuenta como actualización                                                                                                                  | Usuario                                     | Cada declaración es una fila en `availability_change`, aunque repita el estado                                                                                                                    |
-| Q3  | Aceptar respuestas hechas antes del cierre aunque lleguen después, conservando fecha declarada y de recepción e identificando la sincronización tardía | Usuario                                     | `declared_at`, `estimated_at`, `received_at` y `late_sync_after_close` en `emergency_response`                                                                                                    |
-| Q4  | Cambiar la respuesta mientras está activa, con historial                                                                                               | Usuario                                     | `emergency_response` append-only + respuesta vigente en `emergency_recipient`                                                                                                                     |
-| Q5  | Tipo de emergencia como texto libre                                                                                                                    | Usuario                                     | `emergency.emergency_type text`                                                                                                                                                                   |
-| Q6  | Restablecimiento iniciado por un administrador, con cambio obligatorio                                                                                 | Usuario                                     | El administrador fija una contraseña provisoria: `must_change_password = true`, `password_expires_at`, revocación de sesiones y auditoría. Sin tabla de tokens de recuperación                    |
-| Q7  | `America/Santiago`                                                                                                                                     | Usuario                                     | Todo en UTC; la zona se aplica al presentar                                                                                                                                                       |
-| Q8  | Sin eliminación de historial en el MVP                                                                                                                 | Usuario                                     | FK con `ON DELETE RESTRICT`; tablas de historial append-only por trigger                                                                                                                          |
-| Q9  | 30 días de convocatorias cerradas en el teléfono, salvo activas y con operaciones pendientes                                                           | Usuario                                     | Limpieza local protegida por FK y triggers (ver `sqlite/schema.md` §4)                                                                                                                            |
-| P1  | Una sola convocatoria activa                                                                                                                           | **Supuesto** (recomendación, sin respuesta) | Índice único parcial; el segundo foco se comunica como aviso `UPDATE`                                                                                                                             |
-| P2  | Control de presencia en terreno                                                                                                                        | **Supuesto: incluido como condicional**     | Tabla `emergency_attendance` marcada; se elimina del diseño si se rechaza                                                                                                                         |
-| P3  | Sin SMS en el MVP                                                                                                                                      | **Supuesto**                                | `delivery_channel` solo `PUSH`, extensible                                                                                                                                                        |
-| P4  | Dos o más coordinadores                                                                                                                                | **Supuesto**                                | Sin efecto en el modelo; recomendación operativa                                                                                                                                                  |
+| #      | Decisión                                                  | Cómo queda en el modelo                                                                             |
+| ------ | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Q1     | Coordinador también puede ser brigadista                  | `user_role` separado de `brigadista_profile.active`. Convocados = cuenta activa y perfil activo     |
+| Q2     | Reconfirmar cuenta como actualización                     | Cada declaración es una fila en `availability_change`                                               |
+| Q3     | Aceptar respuestas previas al cierre que llegan después   | `declared_at`, `estimated_at`, `received_at`, `late_sync_after_close`                               |
+| Q4     | Cambiar la respuesta con historial                        | `emergency_response` append-only + vigente en `emergency_recipient`                                 |
+| Q5     | Tipo de emergencia como texto libre                       | `emergency.emergency_type text`                                                                     |
+| Q6     | Restablecimiento por administrador con cambio obligatorio | Contraseña provisoria con vencimiento, sesión restringida, `credential_version` (ver `security.md`) |
+| Q7     | `America/Santiago`                                        | Todo en UTC; la zona se aplica al presentar                                                         |
+| Q8     | Sin eliminación de historial                              | `ON DELETE RESTRICT`, triggers append-only, sin `DELETE` para la app                                |
+| Q9     | 30 días en el teléfono, salvo activas y pendientes        | Limpieza protegida por FK y triggers                                                                |
+| **P1** | **Una sola convocatoria activa** — aprobado               | Índice único parcial                                                                                |
+| **P2** | **Sin control de presencia en el MVP** — aprobado         | `emergency_attendance` retirada                                                                     |
+| **P3** | **Sin SMS** — aprobado                                    | `delivery_channel` solo `PUSH`, extensible                                                          |
+| **P4** | **Varios coordinadores** — aprobado                       | Sin efecto en el modelo (`user_role` ya lo permite)                                                 |
 
-## 2. Los seis puntos de la revisión
+## 2. Puntos de la revisión 2
 
-| Punto                                                    | Dónde se resuelve                                                                                                                                                                                                                                            |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1. Cola de sincronización persistente en SQLite          | `outbox` en la misma transacción que el dato; `journal_mode = WAL`, `synchronous = FULL`; número de secuencia por dispositivo asignado en esa transacción                                                                                                    |
-| 2. Protección contra duplicados al reenviar              | `operation_id` (UUID) como PK en `outbox` y en `sync_operation`; además U (`device_id`, `device_seq`); los registros creados usan el mismo UUID; acuses con U (`notice_id`, `recipient_id`, `device_id`)                                                     |
-| 3. Conflictos sin depender solo del reloj                | Orden por `device_seq` dentro de un dispositivo; reloj monotónico y desfase medido para estimar la hora real; `base_row_version` para detectar escrituras sobre datos desactualizados; ventana de ambigüedad que marca `CONFLICT` en vez de decidir a ciegas |
-| 4. Conservación de operaciones rechazadas                | Servidor: `sync_operation` guarda payload, motivo y estado de resolución, sin borrar. Teléfono: `outbox` mantiene `REJECTED` hasta que el usuario lo ve, y luego 30 días más                                                                                 |
-| 5. Permisos separados de la condición de brigadista      | `user_role` vs `brigadista_profile.active`                                                                                                                                                                                                                   |
-| 6. Limpieza local que no toque lo activo ni lo pendiente | FK `RESTRICT` de `outbox` a `emergency`; triggers que abortan el borrado de convocatorias activas y de filas no sincronizadas                                                                                                                                |
+| Punto                                                            | Respuesta                                                                                                                                                                                                                                                                | Documento                                        |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
+| 1. Orden de confirmación y descargas consistentes                | Candado de transacción + secuencia `CACHE 1`; demostración formal; descarga en una instantánea `REPEATABLE READ`; upsert solo si la versión es mayor; caso del convocado tardío                                                                                          | `versioning.md`                                  |
+| 2. Operaciones originales inmutables y resoluciones como eventos | `sync_operation` append-only; nueva `sync_operation_resolution` (append-only, una resolución final por operación); correcciones como respuestas nuevas con `corrects_operation_id`; en el teléfono, triggers que impiden cambiar el contenido de operaciones y registros | `postgresql/schema.md` §7, `sqlite/schema.md` §3 |
+| 3. Contraseñas provisorias y revocación                          | `CHECK` provisoria ⇔ vencimiento; `credential_version`; `session_scope`; rotación con `family_id` y detección de reutilización; candado de fila contra la carrera renovación/restablecimiento                                                                            | `security.md`                                    |
+| 4. Bandeja, entrega push y acuse separados                       | `notification_delivery` solo con hechos del proveedor; `notice_ack` solo del teléfono, ligado a su operación, con nivel y vía; bandeja independiente del push                                                                                                            | `delivery-and-ack.md`                            |
+
+Los seis puntos de la revisión 1 siguen cubiertos (ver `review-checklist.md`).
 
 ## 3. Tablas
 
-### Servidor (PostgreSQL)
+### Servidor (PostgreSQL) — 17
 
-| Tabla                       | Tipo                         | Replicada al teléfono                                     |
-| --------------------------- | ---------------------------- | --------------------------------------------------------- |
-| `app_user`                  | Mutable                      | Solo nombre y estado propios                              |
-| `user_role`                 | Mutable                      | Solo los propios                                          |
-| `brigadista_profile`        | Mutable                      | El propio                                                 |
-| `availability_change`       | Append-only                  | La propia (30 días)                                       |
-| `emergency`                 | Mutable                      | Si el usuario fue convocado; activas y cerradas ≤ 30 días |
-| `emergency_notice`          | Append-only                  | Las de sus convocatorias                                  |
-| `emergency_recipient`       | Mutable                      | Las propias                                               |
-| `emergency_response`        | Append-only                  | Las propias                                               |
-| `notice_ack`                | Append-only                  | No (el teléfono guarda su copia local)                    |
-| `notification_delivery`     | Mutable                      | No                                                        |
-| `manual_contact`            | Append-only                  | No                                                        |
-| `emergency_attendance` (P2) | Append-only                  | No                                                        |
-| `device`                    | Mutable                      | No                                                        |
-| `auth_session`              | Mutable                      | No                                                        |
-| `sync_operation`            | Append-only salvo resolución | No                                                        |
-| `sync_metadata`             | Una fila                     | Época incluida en cada respuesta                          |
-| `audit_log`                 | Append-only                  | No                                                        |
+| Tabla                       | Tipo                    | Replicada al teléfono                                     |
+| --------------------------- | ----------------------- | --------------------------------------------------------- |
+| `app_user`                  | Mutable                 | Solo nombre, estado y roles propios                       |
+| `user_role`                 | Mutable (alta/baja)     | Vía `app_user`                                            |
+| `brigadista_profile`        | Mutable                 | El propio                                                 |
+| `availability_change`       | Append-only             | La propia (30 días)                                       |
+| `emergency`                 | Mutable                 | Si el usuario fue convocado; activas y cerradas ≤ 30 días |
+| `emergency_notice`          | Append-only             | Las de sus convocatorias                                  |
+| `emergency_recipient`       | Mutable                 | Las propias                                               |
+| `emergency_response`        | Append-only             | Las propias                                               |
+| `notice_ack`                | Append-only             | No (copia local propia)                                   |
+| `notification_delivery`     | Mutable                 | No                                                        |
+| `manual_contact`            | Append-only             | No                                                        |
+| `device`                    | Mutable                 | No                                                        |
+| `auth_session`              | Mutable                 | No                                                        |
+| `sync_operation`            | **Append-only**         | No                                                        |
+| `sync_operation_resolution` | **Append-only** (nueva) | No                                                        |
+| `sync_metadata`             | Una fila                | Época incluida en cada respuesta                          |
+| `audit_log`                 | Append-only             | No                                                        |
 
-### Teléfono (SQLite)
+`emergency_attendance` se retiró (P2).
+
+### Teléfono (SQLite) — 11
 
 `device_identity`, `local_user`, `brigadista_profile`, `availability_change`,
 `emergency`, `emergency_notice`, `emergency_recipient`, `emergency_response`,
@@ -91,46 +93,45 @@ erDiagram
     brigadista_profile ||--o{ availability_change : declara
     app_user ||--o{ emergency : "crea/activa/cierra"
     emergency ||--o{ emergency_notice : emite
-    emergency ||--o{ emergency_recipient : convoca
+    emergency ||--o{ emergency_recipient : "bandeja"
     brigadista_profile ||--o{ emergency_recipient : "es convocado"
     emergency_recipient ||--o{ emergency_response : responde
-    emergency_recipient ||--o{ notice_ack : acusa
-    emergency_notice ||--o{ notice_ack : "es acusado"
-    emergency_notice ||--o{ notification_delivery : "se entrega"
+    emergency_notice ||--o{ notification_delivery : "entrega push"
     emergency_recipient ||--o{ notification_delivery : recibe
-    emergency_recipient ||--o{ manual_contact : "es contactado"
-    emergency_recipient ||--o{ emergency_attendance : "presencia (P2)"
+    emergency_notice ||--o{ notice_ack : "acuse del teléfono"
+    emergency_recipient ||--o{ notice_ack : acusa
+    emergency_recipient ||--o{ manual_contact : "contacto manual"
     device ||--o{ sync_operation : envía
+    sync_operation ||--o{ sync_operation_resolution : "se resuelve"
+    sync_operation ||--o| notice_ack : origina
 ```
 
 ## 5. Mecanismos transversales
 
-| Mecanismo       | Implementación (servidor)                                                                                                                                                                 |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| IDs             | `uuid` con `DEFAULT uuidv7()` (nativo en PostgreSQL 18); el teléfono envía sus propios UUID v7                                                                                            |
-| Versión de fila | Secuencia global `sync_row_version_seq` asignada por trigger, con un candado de transacción que garantiza que las versiones se confirman en orden (sin huecos visibles para los cursores) |
-| Append-only     | Trigger que rechaza `UPDATE`/`DELETE` + el rol de la aplicación sin esos permisos                                                                                                         |
-| Borrados        | Sin borrado físico en el MVP; solo `emergency` en `DRAFT` admite `deleted_at`                                                                                                             |
-| Época           | `sync_metadata.sync_epoch` cambia al restaurar un backup                                                                                                                                  |
+| Mecanismo       | Implementación (servidor)                                                    |
+| --------------- | ---------------------------------------------------------------------------- |
+| IDs             | `uuid DEFAULT uuidv7()` (PostgreSQL 18); el teléfono envía sus UUID v7       |
+| Versión de fila | Secuencia `CACHE 1` + candado de transacción (`versioning.md`)               |
+| Append-only     | Trigger que rechaza `UPDATE`/`DELETE` + permisos del rol                     |
+| Borrados        | Solo `user_role` (con touch de `app_user`) y `emergency` en `DRAFT` (lógico) |
+| Época           | `sync_metadata.sync_epoch` cambia al restaurar un backup                     |
+| Credenciales    | `credential_version` invalida sesiones al restablecer o desactivar           |
 
 ## 6. Compatibilidad con Prisma
 
-| Elemento                                                          | Prisma                                  | SQL manual en la migración |
-| ----------------------------------------------------------------- | --------------------------------------- | -------------------------- |
-| Tablas, columnas, enums, FK, únicos compuestos, `jsonb`, `BigInt` | Sí                                      | —                          |
-| `DEFAULT uuidv7()`                                                | `@default(dbgenerated("uuidv7()"))`     | —                          |
-| Relación circular `emergency_recipient` ↔ `emergency_response`    | Sí, con relaciones con nombre           | —                          |
-| Índices únicos parciales                                          | Verificar soporte en la versión elegida | Si no lo soporta           |
-| Restricciones `CHECK`                                             | No                                      | Sí                         |
-| Triggers (versión de fila, append-only) y secuencia               | No                                      | Sí                         |
-| Permisos del rol de la aplicación                                 | No                                      | Sí (o script de devops)    |
+| Elemento                                                                                                           | Prisma                              | SQL manual en la migración |
+| ------------------------------------------------------------------------------------------------------------------ | ----------------------------------- | -------------------------- |
+| Tablas, columnas, enums, FK, únicos compuestos, `jsonb`, `BigInt`                                                  | Sí                                  | —                          |
+| `DEFAULT uuidv7()`                                                                                                 | `@default(dbgenerated("uuidv7()"))` | —                          |
+| Relaciones circulares (`emergency_recipient` ↔ `emergency_response`, `brigadista_profile` ↔ `availability_change`) | Sí, con relaciones con nombre       | —                          |
+| Índices únicos parciales y sobre expresiones (`lower(email)`)                                                      | Verificar en la versión elegida     | Si no lo soporta           |
+| `CHECK`, triggers, secuencia `CACHE 1`, candado                                                                    | No                                  | Sí                         |
+| Permisos del rol de la aplicación                                                                                  | No                                  | Sí (o script de devops)    |
 
-Versión de PostgreSQL: **18** (por `uuidv7()`). Si se usa una anterior, el UUID
-se genera en el backend y se quita el `DEFAULT`. Lo fija devops-architect.
+## 7. Fuera del alcance de esta misión
 
-## 7. Pendiente después de esta revisión
-
-- Aprobación de P1–P4.
-- Autorización para traducir a `schema.prisma` y migraciones.
-- Contrato HTTP de sincronización (backend-architect + mobile-architect) sobre
-  `conflict-resolution.md` y `offline-storage.md`.
+- `schema.prisma`, migraciones y ejecución de SQL: **esperan autorización expresa**.
+- Contrato HTTP de sincronización: backend-architect + mobile-architect.
+- Tiempos de re-aviso, vida del token de acceso y plazo de la contraseña
+  provisoria: backend-architect (valores sugeridos en `security.md` y
+  `delivery-and-ack.md`).

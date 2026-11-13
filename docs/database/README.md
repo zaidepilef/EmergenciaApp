@@ -1,6 +1,6 @@
 # Arquitectura de datos — EmergenciaApp
 
-> **Estado: PROPUESTA PRELIMINAR — pendiente de aprobación.**
+> **Estado: revisión 2 lista para auditoría final** (arquitectura aprobada preliminarmente el 2026-11-13).
 > No existen tablas, migraciones ni `schema.prisma`. Nada de lo descrito aquí está
 > implementado. Responsable: `database-architect`.
 
@@ -12,7 +12,11 @@
 | [logical-model.md](logical-model.md) | Atributos, claves, restricciones, tipos portables PostgreSQL/SQLite | Propuesta |
 | [synchronization/strategy.md](synchronization/strategy.md) | Réplica local, cola de operaciones, idempotencia, conflictos | Propuesta |
 | [failure-scenarios.md](failure-scenarios.md) | Peores casos (incendio, push perdido, sin Internet, aviso externo, servidor caído) y cambios al modelo | Propuesta |
-| [physical-model.md](physical-model.md) | Visión general del modelo físico, decisiones Q1–Q9 y P1–P4 | **Para revisión** (prevalece sobre los preliminares) |
+| [review-checklist.md](review-checklist.md) | **Empezar aquí:** cambios de la revisión 2 y lista de verificación | Para auditoría final |
+| [physical-model.md](physical-model.md) | Visión general del modelo físico, decisiones Q1–Q9 y P1–P4 | **Para auditoría final** (prevalece sobre los preliminares) |
+| [security.md](security.md) | Contraseñas provisorias, sesiones y clasificación | Para auditoría final |
+| [synchronization/versioning.md](synchronization/versioning.md) | Demostración del orden de row_version | Para auditoría final |
+| [synchronization/delivery-and-ack.md](synchronization/delivery-and-ack.md) | Bandeja, entrega push y acuse | Para auditoría final |
 | [postgresql/schema.md](postgresql/schema.md) | DDL de referencia del servidor | Para revisión |
 | [sqlite/schema.md](sqlite/schema.md) | DDL de referencia del teléfono y limpieza local | Para revisión |
 | [synchronization/conflict-resolution.md](synchronization/conflict-resolution.md) | Tiempo, orden y conflictos | Para revisión |
