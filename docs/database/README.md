@@ -12,7 +12,12 @@
 | [logical-model.md](logical-model.md) | Atributos, claves, restricciones, tipos portables PostgreSQL/SQLite | Propuesta |
 | [synchronization/strategy.md](synchronization/strategy.md) | Réplica local, cola de operaciones, idempotencia, conflictos | Propuesta |
 | [failure-scenarios.md](failure-scenarios.md) | Peores casos (incendio, push perdido, sin Internet, aviso externo, servidor caído) y cambios al modelo | Propuesta |
-| `physical-model.md`, `postgresql/`, `sqlite/` | DDL, índices, migraciones | **No iniciado** (requiere aprobación) |
+| [physical-model.md](physical-model.md) | Visión general del modelo físico, decisiones Q1–Q9 y P1–P4 | **Para revisión** (prevalece sobre los preliminares) |
+| [postgresql/schema.md](postgresql/schema.md) | DDL de referencia del servidor | Para revisión |
+| [sqlite/schema.md](sqlite/schema.md) | DDL de referencia del teléfono y limpieza local | Para revisión |
+| [synchronization/conflict-resolution.md](synchronization/conflict-resolution.md) | Tiempo, orden y conflictos | Para revisión |
+| [synchronization/offline-storage.md](synchronization/offline-storage.md) | Cola local, rechazos, limpieza y recuperación | Para revisión |
+| Migraciones y `schema.prisma` | — | **No iniciado** (requiere autorización) |
 
 ## Decisiones vigentes que condicionan el modelo
 
@@ -62,6 +67,9 @@ superada por `AGENTS.md`.
 
 ## 3. Dudas y supuestos a validar
 
+> **Respondidas por el usuario el 2026-11-13** (Q1 cambió: un coordinador también
+> puede ser brigadista). Ver [physical-model.md](physical-model.md) §1.
+
 | # | Pregunta | Supuesto actual |
 |---|---|---|
 | Q1 | ¿Un coordinador también puede ser brigadista (recibir convocatorias)? | No: un rol por usuario. El modelo permite cambiarlo (perfil de brigadista separado) |
@@ -84,7 +92,7 @@ superada por `AGENTS.md`.
 
 | Para | Necesidad |
 |---|---|
-| backend-architect | Endpoint de sincronización por lotes con resultado por operación; asignar `row_version`; registrar `processed_operation` |
+| backend-architect | Endpoint de sincronización por lotes con resultado por operación; asignar `row_version`; registrar `sync_operation` |
 | mobile-architect | Generar UUID v7 en el dispositivo; outbox persistente; enviar acuse de recepción de la convocatoria |
 | ui-ux-designer | Estados visibles: pendiente de envío, enviado, confirmado por el servidor, recibido después del cierre |
 | devops-architect | Backups de PostgreSQL; la réplica SQLite **no** es respaldo |

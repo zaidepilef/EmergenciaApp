@@ -219,7 +219,7 @@ teléfono). La respuesta del usuario vive en `emergency_response`, no aquí.
 | metadata               | json       | Datos mínimos, sin secretos ni RUT completo                               |
 | created_at             | timestamp  | NN                                                                        |
 
-### `processed_operation` — idempotencia de la sincronización
+### `processed_operation` — idempotencia de la sincronización (renombrada `sync_operation` en el modelo físico)
 
 | Columna            | Tipo             | Reglas                        |
 | ------------------ | ---------------- | ----------------------------- |

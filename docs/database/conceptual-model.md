@@ -45,7 +45,7 @@ erDiagram
 
 Cardinalidades clave:
 
-- Usuario 1 — 0..1 Perfil de brigadista (solo rol `BRIGADISTA` en el MVP; ver Q1).
+- Usuario 1 — 0..1 Perfil de brigadista. **Q1 respondida:** la condición de brigadista es independiente de los permisos; un coordinador o administrador también puede tener perfil de brigadista y recibir convocatorias.
 - Convocatoria 1 — 0..N Convocados; un brigadista aparece **una sola vez** por convocatoria.
 - Convocado 1 — 0..N Respuestas; la última define la respuesta actual.
 - Convocado 1 — 0..N Entregas (una por canal: push, bandeja interna).
