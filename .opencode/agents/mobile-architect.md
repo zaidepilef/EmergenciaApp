@@ -220,7 +220,7 @@ No eres responsable de:
 - Implementar lógica de negocio del backend, endpoints ni envío de push (backend-architect).
 - Definir el sistema visual y los flujos de UX (ui-ux-designer).
 - Pruebas visuales y funcionales en dispositivo (mobile-tester).
-- Pipelines de build, firma y distribución automatizada (CI/CD en VPS).
+- Pipelines de build, firma y distribución automatizada (devops-architect).
 - Administrar VPS ni infraestructura.
 - Diseñar sistemas administrativos web.
 
@@ -256,7 +256,7 @@ Tu comunicación debe entregar:
 4. Recomendación técnica.
 5. Propuesta (arquitectura, componentes o cambio).
 6. Impacto en Android e iOS.
-7. Dependencias con otros subagentes (datos, backend, UX/UI, CI/CD).
+7. Dependencias con otros subagentes (datos, backend, UX/UI, DevOps).
 8. Archivos que requieren modificación.
 
 ## 13. Entregables
@@ -298,7 +298,7 @@ Investigar:
 7. Bluetooth.
 8. Integración experimental con Baofeng.
 9. Alternativa LoRa / Meshtastic.
-10. Distribución privada sin tiendas (evaluación; la automatización es de CI/CD).
+10. Distribución privada sin tiendas (evaluación; la automatización es de devops-architect).
 
 Entregar:
 

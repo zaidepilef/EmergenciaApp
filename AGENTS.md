@@ -21,8 +21,20 @@ EmergenciaApp/
 ├── backend/           # API / backend (pendiente)
 ├── web/               # Dashboard Next.js (se migra desde src/)
 ├── packages/shared/   # Validación de RUT compartida (pendiente)
+├── deploy/            # Compose de producción, proxy y deploy/<proveedor>/ (pendiente)
+├── .github/workflows/ # Pipelines de CI/CD (pendiente)
 └── README.md
 ```
+
+### Decisiones de infraestructura (2026-11-13)
+
+| Tema | Decisión |
+|---|---|
+| Principio | Agnóstico del proveedor: contenedores + Docker Compose + variables de entorno; lo específico de cada proveedor en `deploy/<proveedor>/` |
+| Destino de referencia | VPS de Hostinger para backend, web y PostgreSQL |
+| GitHub Pages | Solo contenido estático (documentación o landing). No sirve para API, base de datos ni dashboard |
+| CI | GitHub Actions por área; imágenes en GHCR |
+| Producción | Solo con aprobación manual del usuario; backup antes de migrar; rollback por etiqueta de imagen |
 
 ### Decisiones del dashboard web (2026-11-13)
 
@@ -64,11 +76,11 @@ Orden de incorporación:
 | 3 | Diseño UX/UI | `.opencode/agents/ui-ux-designer.md` | Definido |
 | 4 | Arquitecto / desarrollador backend | `.opencode/agents/backend-architect.md` | Definido |
 | 5 | Tester móvil WYSIWYG | `.opencode/agents/mobile-tester.md` | Definido |
-| 6 | CI/CD en VPS | `.opencode/agents/cicd-vps.md` | Pendiente |
+| 6 | DevOps / CI-CD (agnóstico; VPS Hostinger de referencia) | `.opencode/agents/devops-architect.md` | Definido |
 | 7 | Arquitecto web (dashboard) | `.opencode/agents/web-architect.md` | Definido |
 
-Los nombres de archivo de los subagentes pendientes son tentativos y se fijan al
-crearlos.
+Todos los subagentes previstos están definidos. Cualquier subagente nuevo se
+agrega a esta tabla y al reparto de responsabilidades.
 
 ### 1. database-architect
 
@@ -124,6 +136,19 @@ Linux y macOS) y verifica lo que el usuario ve y hace: pantallas, convocatorias,
 push, modo sin conexión. Entrega informes con evidencia y veredicto. No modifica
 código de producción; reporta los hallazgos al área responsable.
 
+### 6. devops-architect
+
+CI/CD, despliegue y operación, **agnóstico de la infraestructura**: imágenes de
+contenedor, Docker Compose y variables de entorno, con lo específico de cada
+proveedor aislado en `deploy/<proveedor>/`. Destino actual: VPS de Hostinger;
+GitHub Pages solo para contenido estático. Se encarga de pipelines (GitHub
+Actions), proxy con TLS, hardening del servidor, backups probados, secretos (solo
+nombres en docs), monitoreo y builds móviles con EAS. Documenta en
+`docs/devops/`. Nunca despliega a producción ni genera costos sin aprobación.
+
+Primera misión: arquitectura de despliegue, matriz de plataformas, CI/CD,
+backups, distribución móvil, secretos y costos, sin crear infraestructura.
+
 ### 7. web-architect
 
 Dashboard Next.js en `web/` para `COORDINADOR` (brigadistas, convocatorias,
@@ -157,8 +182,8 @@ tipos OpenAPI, polling y plan de pruebas, sin código hasta aprobación.
 | Pruebas del backend (unitarias, integración, contrato) | backend-architect | backend-architect |
 | Pruebas visuales y funcionales en dispositivo | mobile-tester | mobile-tester |
 | Docker local del backend | backend-architect | backend-architect |
-| Build, firma y distribución de la app | mobile-architect (requisitos) | CI/CD en VPS |
-| Despliegue, TLS, backups y secretos de producción | CI/CD en VPS | CI/CD en VPS |
+| Build, firma y distribución de la app | mobile-architect (requisitos) | devops-architect |
+| Despliegue, TLS, backups y secretos de producción | devops-architect | devops-architect |
 
 ### Inconsistencias abiertas
 

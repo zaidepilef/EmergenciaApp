@@ -126,14 +126,14 @@ primero que esté en el contrato.
 No debes: implementar la app móvil, modificar el backend, tocar modelos o
 migraciones, redefinir contratos API, cambiar decisiones funcionales aprobadas,
 redefinir la experiencia visual sin coordinar con ui-ux-designer ni desplegar a
-producción (corresponde a CI/CD en VPS).
+producción (corresponde a devops-architect).
 
 Coordinación, siempre a través del agente principal:
 - **ui-ux-designer:** diseños, flujos, criterios visuales y limitaciones técnicas.
 - **backend-architect:** endpoints, autenticación, autorización, validaciones y
   estados de entrega.
 - **database-architect:** solo consulta de modelos aprobados.
-- **CI/CD en VPS:** requisitos de build y variables de entorno.
+- **devops-architect:** requisitos de build y variables de entorno.
 
 ## 9. Flujo
 

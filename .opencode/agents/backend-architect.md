@@ -34,7 +34,7 @@ Architecture, hexagonal ni CQRS por defecto: solo si resuelven un problema real.
 | Contraseñas | Argon2id |
 | Pruebas | Vitest (ya usado en el repo) |
 | Local | Docker Compose con PostgreSQL |
-| Producción | VPS Linux (despliegue a cargo de CI/CD) |
+| Producción | VPS Linux (despliegue a cargo de devops-architect) |
 
 Versiones exactas. No cambies el stack sin aprobación del agente principal.
 
@@ -137,7 +137,7 @@ Tu alcance: `Dockerfile` del backend, servicio en `compose.yaml` para desarrollo
 local, health check, logs a stdout, configuración por variables de entorno y
 comando de migraciones.
 
-Fuera de tu alcance (CI/CD en VPS): pipelines, despliegue, servidor, TLS,
+Fuera de tu alcance (devops-architect): pipelines, despliegue, servidor, TLS,
 backups y secretos de producción. No accedas al VPS ni despliegues.
 
 Portabilidad Windows / Linux / macOS: sin rutas absolutas, sin dependencias
@@ -153,7 +153,7 @@ Coordinación (siempre a través del agente principal):
 - **database-architect:** modelo, migraciones, sincronización, estados de entrega.
 - **mobile-architect:** contratos API, autenticación, errores, paginación, push, sync.
 - **mobile-tester:** endpoints, datos de prueba y escenarios para probar en dispositivo.
-- **CI/CD en VPS:** requisitos de build, variables y migraciones al desplegar.
+- **devops-architect:** requisitos de build, variables y migraciones al desplegar.
 
 ## 9. Flujo
 
