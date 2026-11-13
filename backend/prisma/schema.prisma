@@ -1,0 +1,611 @@
+// EmergenciaApp — esquema central (PostgreSQL 18).
+//
+// Fuente de diseño: docs/database/physical-model.md y postgresql/schema.md
+// (revisión 2). Lo que Prisma no expresa (CHECK, triggers, secuencia de
+// sincronización, índices parciales y por expresión) vive como SQL manual en la
+// migración inicial. Ver backend/prisma/README.md.
+//
+// Convenciones: modelos y campos en camelCase/PascalCase mapeados a snake_case;
+// fechas timestamptz(3) en UTC; claves UUID v7.
+
+generator client {
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  // Preview: índices parciales. Si no estuvieran en el schema, Prisma Migrate
+  // intentaría borrarlos en la siguiente migración. Ver prisma/README.md.
+  previewFeatures = ["partialIndexes"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────────── Enumeraciones ─────────────────────────────
+
+enum AppRole {
+  ADMINISTRADOR
+  COORDINADOR
+
+  @@map("app_role")
+}
+
+enum AvailabilityStatus {
+  DISPONIBLE
+  NO_DISPONIBLE
+  EN_SERVICIO
+
+  @@map("availability_status")
+}
+
+enum EmergencyStatus {
+  DRAFT
+  ACTIVE
+  CLOSED
+
+  @@map("emergency_status")
+}
+
+enum NoticeKind {
+  ACTIVATION
+  UPDATE
+  CLOSURE
+  REOPEN
+
+  @@map("notice_kind")
+}
+
+enum ResponseValue {
+  VOY
+  NO_PUEDO
+
+  @@map("response_value")
+}
+
+enum ActionSource {
+  APP
+  WEB
+  COORDINATOR_PROXY
+
+  @@map("action_source")
+}
+
+enum ContactChannel {
+  APP
+  PHONE_CALL
+  RADIO
+  IN_PERSON
+  OTHER
+
+  @@map("contact_channel")
+}
+
+enum ContactOutcome {
+  ANSWERED
+  NO_ANSWER
+  MESSAGE_LEFT
+
+  @@map("contact_outcome")
+}
+
+enum RecipientReason {
+  ACTIVATION
+  LATE_ADDITION
+
+  @@map("recipient_reason")
+}
+
+enum DeliveryChannel {
+  PUSH
+
+  @@map("delivery_channel")
+}
+
+/// Solo hechos del proveedor push. Los hechos del dispositivo viven en NoticeAck.
+enum DeliveryStatus {
+  QUEUED
+  SENT
+  PROVIDER_ACCEPTED
+  PROVIDER_DELIVERED
+  FAILED
+
+  @@map("delivery_status")
+}
+
+enum AckLevel {
+  RECEIVED
+  OPENED
+
+  @@map("ack_level")
+}
+
+enum AckVia {
+  PUSH
+  SYNC
+
+  @@map("ack_via")
+}
+
+enum DevicePlatform {
+  ANDROID
+  IOS
+
+  @@map("device_platform")
+}
+
+enum PushTokenStatus {
+  VALID
+  INVALID
+
+  @@map("push_token_status")
+}
+
+enum ClientType {
+  MOBILE
+  WEB
+
+  @@map("client_type")
+}
+
+enum SessionScope {
+  FULL
+  PASSWORD_CHANGE_ONLY
+
+  @@map("session_scope")
+}
+
+enum TimeConfidence {
+  MONOTONIC
+  CLOCK_OFFSET
+  SERVER_RECEIPT
+  HUMAN_DECLARED
+
+  @@map("time_confidence")
+}
+
+enum SyncResult {
+  APPLIED
+  SUPERSEDED
+  CONFLICT
+  REJECTED
+
+  @@map("sync_result")
+}
+
+enum ResolutionAction {
+  NOTE
+  CONFIRMED
+  CORRECTED
+  DISMISSED
+
+  @@map("resolution_action")
+}
+
+// ──────────────────────── Identidad, permisos y sesiones ────────────────────────
+
+/// Cuenta de acceso. password_hash nunca se expone ni se replica.
+/// row_version lo asigna el trigger set_row_version (el default 0 se sobrescribe).
+model AppUser {
+  id                 String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  rut                String    @unique(map: "app_user_rut_key")
+  passwordHash       String    @map("password_hash")
+  fullName           String    @map("full_name")
+  email              String?   @unique(map: "app_user_email_key") // siempre en minúsculas (CHECK)
+  active             Boolean   @default(true)
+  mustChangePassword Boolean   @default(true) @map("must_change_password")
+  passwordExpiresAt  DateTime? @map("password_expires_at") @db.Timestamptz(3)
+  credentialVersion  Int       @default(1) @map("credential_version")
+  passwordChangedAt  DateTime? @map("password_changed_at") @db.Timestamptz(3)
+  lastLoginAt        DateTime? @map("last_login_at") @db.Timestamptz(3)
+  deactivatedAt      DateTime? @map("deactivated_at") @db.Timestamptz(3)
+  deactivatedById    String?   @map("deactivated_by") @db.Uuid
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  rowVersion         BigInt    @default(0) @map("row_version")
+
+  deactivatedBy    AppUser?  @relation("UserDeactivatedBy", fields: [deactivatedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  deactivatedUsers AppUser[] @relation("UserDeactivatedBy")
+
+  roles             UserRole[]         @relation("UserRoles")
+  rolesGranted      UserRole[]         @relation("UserRoleGrantedBy")
+  brigadistaProfile BrigadistaProfile?
+  devices           Device[]
+  sessions          AuthSession[]
+
+  emergenciesCreated   Emergency[]               @relation("EmergencyCreatedBy")
+  emergenciesActivated Emergency[]               @relation("EmergencyActivatedBy")
+  emergenciesClosed    Emergency[]               @relation("EmergencyClosedBy")
+  noticesCreated       EmergencyNotice[]
+  recipientsAdded      EmergencyRecipient[]
+  responsesRecorded    EmergencyResponse[]
+  manualContacts       ManualContact[]
+  syncOperations       SyncOperation[]
+  resolutions          SyncOperationResolution[]
+  auditLogs            AuditLog[]
+
+  @@index([rowVersion], map: "app_user_sync_idx")
+  @@map("app_user")
+}
+
+/// Permisos (Q1), independientes de la condición de brigadista.
+/// Otorgar o revocar: en la misma transacción, touch de AppUser + AuditLog.
+model UserRole {
+  userId      String   @map("user_id") @db.Uuid
+  role        AppRole
+  grantedById String?  @map("granted_by") @db.Uuid
+  grantedAt   DateTime @default(now()) @map("granted_at") @db.Timestamptz(3)
+
+  user      AppUser  @relation("UserRoles", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  grantedBy AppUser? @relation("UserRoleGrantedBy", fields: [grantedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([userId, role])
+  @@map("user_role")
+}
+
+/// Teléfono registrado. El id lo genera el dispositivo (sin default).
+model Device {
+  id                 String           @id @db.Uuid
+  userId             String           @map("user_id") @db.Uuid
+  platform           DevicePlatform
+  pushToken          String?          @unique(map: "device_push_token_uq") @map("push_token")
+  pushTokenStatus    PushTokenStatus? @map("push_token_status")
+  pushTokenUpdatedAt DateTime?        @map("push_token_updated_at") @db.Timestamptz(3)
+  appVersion         String?          @map("app_version")
+  osVersion          String?          @map("os_version")
+  lastDeviceSeq      BigInt           @default(0) @map("last_device_seq")
+  lastClockOffsetMs  Int?             @map("last_clock_offset_ms")
+  lastSeenAt         DateTime?        @map("last_seen_at") @db.Timestamptz(3)
+  revokedAt          DateTime?        @map("revoked_at") @db.Timestamptz(3)
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime         @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user                AppUser                @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sessions            AuthSession[]
+  availabilityChanges AvailabilityChange[]
+  responses           EmergencyResponse[]
+  deliveries          NotificationDelivery[]
+  acks                NoticeAck[]
+  syncOperations      SyncOperation[]
+
+  @@index([userId], map: "device_user_idx", where: raw("revoked_at IS NULL"))
+  @@map("device")
+}
+
+/// Sesión revocable. Reglas en docs/database/security.md.
+model AuthSession {
+  id                String       @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId            String       @map("user_id") @db.Uuid
+  familyId          String       @map("family_id") @db.Uuid
+  clientType        ClientType   @map("client_type")
+  deviceId          String?      @map("device_id") @db.Uuid
+  scope             SessionScope
+  credentialVersion Int          @map("credential_version")
+  refreshTokenHash  String       @unique(map: "auth_session_refresh_token_hash_key") @map("refresh_token_hash")
+  replacedById      String?      @map("replaced_by_id") @db.Uuid
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  expiresAt         DateTime     @map("expires_at") @db.Timestamptz(3)
+  lastUsedAt        DateTime?    @map("last_used_at") @db.Timestamptz(3)
+  revokedAt         DateTime?    @map("revoked_at") @db.Timestamptz(3)
+  revokedReason     String?      @map("revoked_reason")
+
+  user       AppUser       @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  device     Device?       @relation(fields: [deviceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  replacedBy AuthSession?  @relation("SessionRotation", fields: [replacedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  replaces   AuthSession[] @relation("SessionRotation")
+
+  @@index([userId], map: "auth_session_user_active_idx", where: raw("revoked_at IS NULL"))
+  @@index([familyId], map: "auth_session_family_idx")
+  @@map("auth_session")
+}
+
+// ───────────────────────── Brigadista y disponibilidad ─────────────────────────
+
+/// Condición de brigadista (Q1) y disponibilidad actual.
+model BrigadistaProfile {
+  id                       String             @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId                   String             @unique(map: "brigadista_profile_user_id_key") @map("user_id") @db.Uuid
+  active                   Boolean            @default(true)
+  phone                    String?
+  availabilityStatus       AvailabilityStatus @default(NO_DISPONIBLE) @map("availability_status")
+  availabilityDeclaredAt   DateTime           @map("availability_declared_at") @db.Timestamptz(3)
+  lastAvailabilityChangeId String?            @unique(map: "brigadista_profile_last_change_key") @map("last_availability_change_id") @db.Uuid
+  joinedAt                 DateTime           @default(now()) @map("joined_at") @db.Timestamptz(3)
+  leftAt                   DateTime?          @map("left_at") @db.Timestamptz(3)
+  createdAt                DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                DateTime           @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  rowVersion               BigInt             @default(0) @map("row_version")
+
+  user                   AppUser              @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  lastAvailabilityChange AvailabilityChange?  @relation("ProfileCurrentAvailability", fields: [lastAvailabilityChangeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  availabilityChanges    AvailabilityChange[] @relation("ProfileAvailabilityHistory")
+  recipients             EmergencyRecipient[]
+
+  @@index([availabilityStatus, availabilityDeclaredAt], map: "brigadista_panel_idx", where: raw("active"))
+  @@index([rowVersion], map: "brigadista_profile_sync_idx")
+  @@map("brigadista_profile")
+}
+
+/// Historial de disponibilidad. Append-only (trigger forbid_mutation).
+model AvailabilityChange {
+  id             String             @id @db.Uuid
+  brigadistaId   String             @map("brigadista_id") @db.Uuid
+  status         AvailabilityStatus
+  source         ActionSource
+  declaredAt     DateTime           @map("declared_at") @db.Timestamptz(3)
+  estimatedAt    DateTime           @map("estimated_at") @db.Timestamptz(3)
+  timeConfidence TimeConfidence     @map("time_confidence")
+  receivedAt     DateTime           @default(now()) @map("received_at") @db.Timestamptz(3)
+  deviceId       String?            @map("device_id") @db.Uuid
+  deviceSeq      BigInt?            @map("device_seq")
+  baseRowVersion BigInt?            @map("base_row_version")
+  createdOffline Boolean            @default(false) @map("created_offline")
+  syncResult     SyncResult         @map("sync_result")
+  rowVersion     BigInt             @default(0) @map("row_version")
+
+  brigadista       BrigadistaProfile  @relation("ProfileAvailabilityHistory", fields: [brigadistaId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  device           Device?            @relation(fields: [deviceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  currentInProfile BrigadistaProfile? @relation("ProfileCurrentAvailability")
+
+  @@index([brigadistaId, estimatedAt(sort: Desc)], map: "availability_history_idx")
+  @@index([brigadistaId, rowVersion], map: "availability_sync_idx")
+  @@map("availability_change")
+}
+
+// ──────────────────────── Convocatorias, bandeja y respuestas ────────────────────────
+
+model Emergency {
+  id            String          @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  emergencyType String          @map("emergency_type")
+  meetingPoint  String          @map("meeting_point")
+  scheduledAt   DateTime        @map("scheduled_at") @db.Timestamptz(3)
+  instructions  String?
+  status        EmergencyStatus @default(DRAFT)
+  createdById   String          @map("created_by") @db.Uuid
+  activatedById String?         @map("activated_by") @db.Uuid
+  activatedAt   DateTime?       @map("activated_at") @db.Timestamptz(3)
+  closedById    String?         @map("closed_by") @db.Uuid
+  closedAt      DateTime?       @map("closed_at") @db.Timestamptz(3)
+  deletedAt     DateTime?       @map("deleted_at") @db.Timestamptz(3)
+  createdAt     DateTime        @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  rowVersion    BigInt          @default(0) @map("row_version")
+
+  createdBy   AppUser  @relation("EmergencyCreatedBy", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  activatedBy AppUser? @relation("EmergencyActivatedBy", fields: [activatedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  closedBy    AppUser? @relation("EmergencyClosedBy", fields: [closedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  notices    EmergencyNotice[]
+  recipients EmergencyRecipient[]
+
+  // P1: a lo sumo una convocatoria activa.
+  @@unique([status], map: "emergency_one_active_uq", where: raw("status = 'ACTIVE'"))
+  @@index([createdAt(sort: Desc)], map: "emergency_recent_idx", where: raw("deleted_at IS NULL"))
+  @@index([rowVersion], map: "emergency_sync_idx", where: raw("status <> 'DRAFT'"))
+  @@map("emergency")
+}
+
+/// Aviso emitido sobre una convocatoria. Append-only.
+model EmergencyNotice {
+  id          String     @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  emergencyId String     @map("emergency_id") @db.Uuid
+  kind        NoticeKind
+  message     String?
+  createdById String     @map("created_by") @db.Uuid
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  rowVersion  BigInt     @default(0) @map("row_version")
+
+  emergency  Emergency              @relation(fields: [emergencyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy  AppUser                @relation(fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  deliveries NotificationDelivery[]
+  acks       NoticeAck[]
+
+  @@index([emergencyId, createdAt], map: "emergency_notice_idx")
+  @@index([rowVersion], map: "emergency_notice_sync_idx")
+  @@map("emergency_notice")
+}
+
+/// Bandeja interna: existe aunque el brigadista no tenga dispositivo ni push.
+model EmergencyRecipient {
+  id                String          @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  emergencyId       String          @map("emergency_id") @db.Uuid
+  brigadistaId      String          @map("brigadista_id") @db.Uuid
+  addedReason       RecipientReason @map("added_reason")
+  addedById         String?         @map("added_by") @db.Uuid
+  convokedAt        DateTime        @default(now()) @map("convoked_at") @db.Timestamptz(3)
+  currentResponse   ResponseValue?  @map("current_response")
+  currentResponseId String?         @unique(map: "emergency_recipient_current_response_key") @map("current_response_id") @db.Uuid
+  respondedAt       DateTime?       @map("responded_at") @db.Timestamptz(3)
+  updatedAt         DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+  rowVersion        BigInt          @default(0) @map("row_version")
+
+  emergency          Emergency          @relation(fields: [emergencyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  brigadista         BrigadistaProfile  @relation(fields: [brigadistaId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  addedBy            AppUser?           @relation(fields: [addedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  currentResponseRef EmergencyResponse? @relation("RecipientCurrentResponse", fields: [currentResponseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  responses      EmergencyResponse[]    @relation("RecipientResponseHistory")
+  deliveries     NotificationDelivery[]
+  acks           NoticeAck[]
+  manualContacts ManualContact[]
+
+  @@unique([emergencyId, brigadistaId], map: "recipient_once_uq")
+  @@index([emergencyId, currentResponse], map: "recipient_counts_idx")
+  @@index([brigadistaId, rowVersion], map: "recipient_sync_idx")
+  @@map("emergency_recipient")
+}
+
+/// Historial de respuestas. Append-only.
+model EmergencyResponse {
+  id                  String         @id @db.Uuid
+  recipientId         String         @map("recipient_id") @db.Uuid
+  response            ResponseValue
+  source              ActionSource
+  channel             ContactChannel
+  recordedById        String?        @map("recorded_by") @db.Uuid
+  declaredAt          DateTime       @map("declared_at") @db.Timestamptz(3)
+  estimatedAt         DateTime       @map("estimated_at") @db.Timestamptz(3)
+  timeConfidence      TimeConfidence @map("time_confidence")
+  receivedAt          DateTime       @default(now()) @map("received_at") @db.Timestamptz(3)
+  deviceId            String?        @map("device_id") @db.Uuid
+  deviceSeq           BigInt?        @map("device_seq")
+  baseRowVersion      BigInt?        @map("base_row_version")
+  createdOffline      Boolean        @default(false) @map("created_offline")
+  lateSyncAfterClose  Boolean        @default(false) @map("late_sync_after_close")
+  syncResult          SyncResult     @map("sync_result")
+  correctsOperationId String?        @map("corrects_operation_id") @db.Uuid
+  rowVersion          BigInt         @default(0) @map("row_version")
+
+  recipient          EmergencyRecipient        @relation("RecipientResponseHistory", fields: [recipientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  recordedBy         AppUser?                  @relation(fields: [recordedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  device             Device?                   @relation(fields: [deviceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  correctsOperation  SyncOperation?            @relation("ResponseCorrects", fields: [correctsOperationId], references: [operationId], onDelete: Restrict, onUpdate: Restrict)
+  currentInRecipient EmergencyRecipient?       @relation("RecipientCurrentResponse")
+  resolutions        SyncOperationResolution[]
+
+  @@index([recipientId, estimatedAt(sort: Desc)], map: "response_history_idx")
+  @@index([recipientId, rowVersion], map: "response_sync_idx")
+  @@map("emergency_response")
+}
+
+// ──────────────────── Entrega push, acuse del dispositivo y contacto ────────────────────
+
+/// Hechos del proveedor push. Nunca registra hechos del dispositivo.
+model NotificationDelivery {
+  id                  String          @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  noticeId            String          @map("notice_id") @db.Uuid
+  recipientId         String          @map("recipient_id") @db.Uuid
+  channel             DeliveryChannel
+  deviceId            String          @map("device_id") @db.Uuid
+  status              DeliveryStatus  @default(QUEUED)
+  attempts            Int             @default(0)
+  nextAttemptAt       DateTime?       @map("next_attempt_at") @db.Timestamptz(3)
+  queuedAt            DateTime        @default(now()) @map("queued_at") @db.Timestamptz(3)
+  sentAt              DateTime?       @map("sent_at") @db.Timestamptz(3)
+  providerAcceptedAt  DateTime?       @map("provider_accepted_at") @db.Timestamptz(3)
+  providerDeliveredAt DateTime?       @map("provider_delivered_at") @db.Timestamptz(3)
+  failedAt            DateTime?       @map("failed_at") @db.Timestamptz(3)
+  providerMessageId   String?         @map("provider_message_id")
+  lastErrorCode       String?         @map("last_error_code")
+  updatedAt           DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  notice    EmergencyNotice    @relation(fields: [noticeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  recipient EmergencyRecipient @relation(fields: [recipientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  device    Device             @relation(fields: [deviceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([noticeId, recipientId, channel, deviceId], map: "delivery_once_uq")
+  @@index([nextAttemptAt], map: "delivery_retry_idx", where: raw("status IN ('QUEUED', 'SENT', 'PROVIDER_ACCEPTED')"))
+  @@map("notification_delivery")
+}
+
+/// Hechos del dispositivo. Solo nacen de una SyncOperation del teléfono. Append-only.
+model NoticeAck {
+  id            String   @id @db.Uuid
+  noticeId      String   @map("notice_id") @db.Uuid
+  recipientId   String   @map("recipient_id") @db.Uuid
+  deviceId      String   @map("device_id") @db.Uuid
+  level         AckLevel
+  via           AckVia?
+  ackedAtDevice DateTime @map("acked_at_device") @db.Timestamptz(3)
+  receivedAt    DateTime @default(now()) @map("received_at") @db.Timestamptz(3)
+  operationId   String   @unique(map: "notice_ack_operation_key") @map("operation_id") @db.Uuid
+
+  notice    EmergencyNotice    @relation(fields: [noticeId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  recipient EmergencyRecipient @relation(fields: [recipientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  device    Device             @relation(fields: [deviceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  operation SyncOperation      @relation(fields: [operationId], references: [operationId], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([noticeId, recipientId, deviceId, level], map: "notice_ack_once_uq")
+  @@index([recipientId, noticeId, level], map: "notice_ack_recipient_idx")
+  @@map("notice_ack")
+}
+
+/// Contacto fuera de la app (llamada, radio, en persona). Append-only.
+model ManualContact {
+  id           String         @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  recipientId  String         @map("recipient_id") @db.Uuid
+  channel      ContactChannel
+  outcome      ContactOutcome
+  occurredAt   DateTime       @map("occurred_at") @db.Timestamptz(3)
+  recordedById String         @map("recorded_by") @db.Uuid
+  recordedAt   DateTime       @default(now()) @map("recorded_at") @db.Timestamptz(3)
+  note         String?
+
+  recipient  EmergencyRecipient @relation(fields: [recipientId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  recordedBy AppUser            @relation(fields: [recordedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([recipientId, occurredAt(sort: Desc)], map: "manual_contact_idx")
+  @@map("manual_contact")
+}
+
+// ───────────────────── Sincronización, resoluciones y auditoría ─────────────────────
+
+/// Operación original del teléfono, tal como llegó. Append-only.
+model SyncOperation {
+  operationId    String     @id @map("operation_id") @db.Uuid
+  deviceId       String     @map("device_id") @db.Uuid
+  userId         String     @map("user_id") @db.Uuid
+  deviceSeq      BigInt     @map("device_seq")
+  operationType  String     @map("operation_type")
+  payload        Json       @db.JsonB
+  baseRowVersion BigInt?    @map("base_row_version")
+  entityId       String?    @map("entity_id") @db.Uuid
+  result         SyncResult
+  resultCode     String?    @map("result_code")
+  receivedAt     DateTime   @default(now()) @map("received_at") @db.Timestamptz(3)
+
+  device      Device                    @relation(fields: [deviceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  user        AppUser                   @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  resolutions SyncOperationResolution[]
+  ack         NoticeAck?
+  corrections EmergencyResponse[]       @relation("ResponseCorrects")
+
+  @@unique([deviceId, deviceSeq], map: "sync_operation_seq_uq")
+  @@index([receivedAt], map: "sync_operation_review_idx", where: raw("result IN ('CONFLICT', 'REJECTED')"))
+  @@map("sync_operation")
+}
+
+/// Resolución de una operación en conflicto o rechazada, como evento separado. Append-only.
+model SyncOperationResolution {
+  id                   String           @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  operationId          String           @map("operation_id") @db.Uuid
+  action               ResolutionAction
+  resolvedById         String           @map("resolved_by") @db.Uuid
+  resolvedAt           DateTime         @default(now()) @map("resolved_at") @db.Timestamptz(3)
+  note                 String?
+  correctiveResponseId String?          @map("corrective_response_id") @db.Uuid
+
+  operation          SyncOperation      @relation(fields: [operationId], references: [operationId], onDelete: Restrict, onUpdate: Restrict)
+  resolvedBy         AppUser            @relation(fields: [resolvedById], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  correctiveResponse EmergencyResponse? @relation(fields: [correctiveResponseId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  // A lo sumo una resolución final por operación; las notas son ilimitadas.
+  @@unique([operationId], map: "resolution_final_uq", where: raw("action <> 'NOTE'"))
+  @@index([operationId], map: "resolution_operation_idx")
+  @@map("sync_operation_resolution")
+}
+
+/// Época de sincronización (una fila). Cambia al restaurar un backup.
+model SyncMetadata {
+  id             Int      @id @db.SmallInt
+  syncEpoch      String   @map("sync_epoch") @db.Uuid
+  epochStartedAt DateTime @default(now()) @map("epoch_started_at") @db.Timestamptz(3)
+
+  @@map("sync_metadata")
+}
+
+/// Auditoría. Append-only; metadata sin secretos ni RUT completo.
+model AuditLog {
+  id          String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  action      String
+  entityType  String?  @map("entity_type")
+  entityId    String?  @map("entity_id") @db.Uuid
+  metadata    Json     @default("{}") @db.JsonB
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  actor AppUser? @relation(fields: [actorUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([createdAt(sort: Desc)], map: "audit_log_time_idx")
+  @@index([actorUserId, createdAt(sort: Desc)], map: "audit_log_actor_idx")
+  @@index([entityType, entityId], map: "audit_log_entity_idx")
+  @@map("audit_log")
+}
