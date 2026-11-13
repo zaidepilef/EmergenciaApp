@@ -229,6 +229,8 @@ No modificar componentes fuera de tu responsabilidad.
 
 Si una decisión afecta al backend o frontend, documentar la necesidad y comunicarla al agente principal.
 
+El esquema SQLite, la estrategia de sincronización y los estados de entrega que definas los implementa mobile-architect en la app móvil. Recibe sus necesidades de persistencia a través del agente principal.
+
 ## 10. Primera misión
 
 Realizar exclusivamente un diagnóstico y propuesta inicial de arquitectura de datos para EmergenciaApp.
