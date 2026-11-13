@@ -11,6 +11,7 @@
 | [conceptual-model.md](conceptual-model.md) | Entidades, relaciones, propiedad de los datos | Propuesta |
 | [logical-model.md](logical-model.md) | Atributos, claves, restricciones, tipos portables PostgreSQL/SQLite | Propuesta |
 | [synchronization/strategy.md](synchronization/strategy.md) | Réplica local, cola de operaciones, idempotencia, conflictos | Propuesta |
+| [failure-scenarios.md](failure-scenarios.md) | Peores casos (incendio, push perdido, sin Internet, aviso externo, servidor caído) y cambios al modelo | Propuesta |
 | `physical-model.md`, `postgresql/`, `sqlite/` | DDL, índices, migraciones | **No iniciado** (requiere aprobación) |
 
 ## Decisiones vigentes que condicionan el modelo

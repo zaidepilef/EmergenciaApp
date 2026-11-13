@@ -56,13 +56,13 @@
 
 ## 4. Conflictos
 
-| Dato                                           | Escritores                                      | Política                                                                                                                                          |
-| ---------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Disponibilidad                                 | Solo el brigadista (uno o más teléfonos, o web) | **Última declaración gana** por `declared_at`; desempate por `id`. Todas quedan en el historial                                                   |
-| Respuesta                                      | Solo el brigadista                              | Igual que disponibilidad, por `responded_at`                                                                                                      |
-| Respuesta tras el cierre                       | —                                               | Se guarda con `received_after_close = true`; no cambia la respuesta vigente si la convocatoria ya está cerrada; el coordinador la ve marcada (Q3) |
-| Convocatoria, perfil                           | Solo el servidor                                | El teléfono no los modifica: sin conflicto                                                                                                        |
-| Usuario desactivado con operaciones pendientes | —                                               | `REJECTED`; el teléfono muestra el motivo y cierra la sesión                                                                                      |
+| Dato                                           | Escritores                                        | Política                                                                                                                                          |
+| ---------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Disponibilidad                                 | Solo el brigadista (uno o más teléfonos, o web)   | **Última declaración gana** por `declared_at`; desempate por `id`. Todas quedan en el historial                                                   |
+| Respuesta                                      | Brigadista (app) y coordinador (en su nombre, E3) | Gana la de mayor `responded_at` (hora real); ambas quedan en el historial y el panel marca la discrepancia (E16)                                  |
+| Respuesta tras el cierre                       | —                                                 | Se guarda con `received_after_close = true`; no cambia la respuesta vigente si la convocatoria ya está cerrada; el coordinador la ve marcada (Q3) |
+| Convocatoria, perfil                           | Solo el servidor                                  | El teléfono no los modifica: sin conflicto                                                                                                        |
+| Usuario desactivado con operaciones pendientes | —                                                 | `REJECTED`; el teléfono muestra el motivo y cierra la sesión                                                                                      |
 
 **Relojes de los teléfonos:** no son confiables. El servidor guarda siempre
 `received_at`. Si una fecha del teléfono viene en el futuro (más allá de una
@@ -72,6 +72,9 @@ la fecha del teléfono porque refleja la intención del usuario.
 
 ## 5. Acuse de recepción
 
+El acuse es **por aviso** (`emergency_notice`): activación, actualización,
+cierre o reapertura. Ver [`failure-scenarios.md`](../failure-scenarios.md).
+
 - Al recibir un push o al ver la convocatoria por primera vez en la bandeja, la
   app encola `ACK_RECIPIENT`.
 - El servidor fija `emergency_recipient.first_seen_at` y, si vino por push,
@@ -79,6 +82,12 @@ la fecha del teléfono porque refleja la intención del usuario.
 - La interfaz y el panel **solo** muestran "recibida" cuando existe ese acuse.
 
 ## 6. Recuperación
+
+- **Restauración de backup del servidor (E13):** cada respuesta de sincronización
+  incluye `sync_epoch`. Si cambia, el teléfono descarta sus cursores, descarga
+  todo de nuevo y reenvía sus registros propios de los últimos días (idempotente),
+  recuperando lo que el servidor perdió. Por eso el teléfono conserva sus
+  registros sincronizados al menos 7 días.
 
 - **Reinstalación o teléfono nuevo:** nuevo `device`; la réplica se reconstruye
   completa desde el servidor. Las operaciones pendientes del teléfono anterior se

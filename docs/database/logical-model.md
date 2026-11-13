@@ -1,5 +1,10 @@
 # Modelo lógico preliminar
 
+> **Ampliado por [`failure-scenarios.md`](failure-scenarios.md)**: avisos
+> (`emergency_notice`), convocados tardíos, respuestas registradas por el
+> coordinador, contactos manuales, presencia en terreno (pendiente) y época de
+> sincronización. Donde difieran, prevalece ese documento.
+
 > **Estado: PROPUESTA PRELIMINAR — pendiente de aprobación.**
 > No son tablas definitivas: no hay DDL, migraciones ni `schema.prisma`. Los
 > nombres y tipos pueden cambiar en el modelo físico.
