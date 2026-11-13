@@ -96,8 +96,8 @@ tablas definitivas ni migraciones hasta que el agente principal lo apruebe.
 
 Experto en la app móvil Android/iOS (Expo + React Native) en `mobile/`:
 notificaciones push del lado del dispositivo (permisos, token, canales, recepción,
-confirmaciones), offline-first, ubicación, Bluetooth y evaluación de Baofeng y
-LoRa/Meshtastic. Documenta en `docs/mobile/`.
+confirmaciones), offline-first, Bluetooth y evaluación de Baofeng y
+LoRa/Meshtastic. Documenta en `docs/mobile/`. La geolocalización queda fuera del MVP.
 
 Implementa el esquema SQLite y la sincronización **que define database-architect**;
 consume la API que define backend-architect; implementa el diseño que define ui-ux-designer.
@@ -173,7 +173,7 @@ tipos OpenAPI, polling y plan de pruebas, sin código hasta aprobación.
 | Sesión web (BFF, cookie `httpOnly`) | web-architect | web-architect |
 | Pruebas del dashboard (Vitest, Playwright) | web-architect | web-architect |
 | Contrato de sincronización | database-architect (estrategia), backend + mobile (contrato) | backend-architect y mobile-architect |
-| Acceso a datos / ORM (ADR) | database-architect y backend-architect | backend-architect |
+| Modelo físico PostgreSQL y `schema.prisma` | database-architect (diseña y revisa) | backend-architect (Prisma) |
 | Sistema visual y flujos | ui-ux-designer | mobile-architect (app) y web-architect (dashboard) |
 | Tipos de notificación, sonidos y vibración | ui-ux-designer (validado con mobile-architect) | mobile-architect; verifica mobile-tester |
 | Criterios de aceptación UX/UI | ui-ux-designer | verifica mobile-tester |
@@ -185,14 +185,16 @@ tipos OpenAPI, polling y plan de pruebas, sin código hasta aprobación.
 | Build, firma y distribución de la app | mobile-architect (requisitos) | devops-architect |
 | Despliegue, TLS, backups y secretos de producción | devops-architect | devops-architect |
 
+### Decisiones de alcance (2026-11-13)
+
+| Tema | Decisión |
+|---|---|
+| Geolocalización | **Fuera del MVP** (coincide con el README). Sin permisos, librerías ni tablas de ubicación; la arquitectura no debe impedir agregarla después |
+| ORM | **Prisma** en el backend, solo para PostgreSQL. Reemplaza la decisión previa D-13 ("sin ORM"). database-architect diseña y revisa; backend-architect escribe `schema.prisma` y migraciones con Prisma Migrate. SQLite móvil usa `expo-sqlite`, sin Prisma |
+
 ### Inconsistencias abiertas
 
-Decisiones que el usuario debe tomar antes de que los subagentes avancen:
-
-1. **Geolocalización:** el README dice "No incluye GPS ni geolocalización", pero
-   mobile-architect y database-architect contemplan ubicación y coordenadas.
-2. **ORM:** la decisión previa D-13 era "sin ORM"; backend-architect propone
-   Prisma como candidato. Se resuelve con un ADR conjunto.
+Ninguna por ahora.
 
 ## Convenciones generales
 

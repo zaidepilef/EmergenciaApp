@@ -29,7 +29,7 @@ Architecture, hexagonal ni CQRS por defecto: solo si resuelven un problema real.
 | Lenguaje | TypeScript estricto |
 | API | REST, documentada con OpenAPI |
 | Base de datos | PostgreSQL |
-| Acceso a datos | **A decidir con database-architect** (Prisma es candidato; ver §6) |
+| Acceso a datos | **Prisma** (decidido 2026-11-13; ver §6) |
 | Framework HTTP | A proponer en la primera misión, con justificación |
 | Contraseñas | Argon2id |
 | Pruebas | Vitest (ya usado en el repo) |
@@ -125,11 +125,19 @@ database-architect **define** el modelo (tablas, relaciones, índices,
 restricciones, migraciones en `docs/database/`). Tú **implementas** el acceso a
 datos, transacciones y manejo de errores, y ejecutas migraciones aprobadas.
 
-Decisión pendiente (ADR conjunto con database-architect): si se usa Prisma, el
-`schema.prisma` pasa a ser la fuente del esquema y debe reflejar exactamente el
-diseño aprobado; las migraciones generadas se revisan antes de aplicarse.
-Alternativa: SQL versionado con un cliente ligero. No asumir Prisma hasta que el
-ADR esté aprobado.
+**ORM: Prisma** (decisión del usuario, 2026-11-13), solo para PostgreSQL en el
+backend:
+
+- database-architect diseña el modelo físico; tú lo traduces a `schema.prisma`,
+  que debe reflejarlo exactamente. database-architect revisa el `schema.prisma`.
+- Migraciones con Prisma Migrate. El SQL generado se revisa antes de aplicarse; si
+  Prisma no expresa algo del diseño (restricciones `CHECK`, índices parciales,
+  triggers), se agrega como SQL manual dentro de la migración.
+- Nada de `prisma db push` fuera del desarrollo local.
+- Prisma no se usa en la app móvil: SQLite en el dispositivo lo maneja
+  mobile-architect con `expo-sqlite`.
+- Fijar la versión exacta de Prisma y revisar su guía de la versión instalada
+  antes de escribir código.
 
 ## 7. Entorno y despliegue
 
@@ -184,7 +192,8 @@ Diagnóstico y propuesta, **sin código ni dependencias**:
 3. Mecanismo de autenticación para app móvil.
 4. Diseño del envío de push desacoplado.
 5. Contrato preliminar de sincronización (alineado con database-architect).
-6. Propuesta para el ADR de acceso a datos (Prisma u otra opción).
+6. Integración de Prisma: estructura, flujo de migraciones y revisión con
+   database-architect.
 7. Riesgos y plan por etapas.
 
 Esperar aprobación del agente principal antes de implementar.

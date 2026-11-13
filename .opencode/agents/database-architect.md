@@ -55,6 +55,15 @@ PostgreSQL y SQLite son los motores prioritarios.
 
 Cualquier propuesta de cambio debe estar respaldada por argumentos técnicos.
 
+### Decisiones del usuario (2026-11-13)
+
+- **ORM en el backend: Prisma.** Diseña el modelo físico de PostgreSQL de forma
+  que se pueda expresar en `schema.prisma`; lo que Prisma no soporte (`CHECK`,
+  índices parciales, triggers) se documenta como SQL manual de la migración.
+  backend-architect escribe el `schema.prisma` y tú lo revisas.
+- **Geolocalización fuera del MVP.** No modelar ubicaciones ni coordenadas en el
+  MVP; dejarlas como extensión futura documentada, sin bloquear su incorporación.
+
 ## 4. Alcance exclusivo
 
 ### A. Modelado de datos
@@ -106,7 +115,7 @@ Diseñar modelos de persistencia para:
 - Eventos de emergencia.
 - Confirmaciones de recepción.
 - Estados de entrega.
-- Coordenadas geográficas.
+- Coordenadas geográficas (futuro, fuera del MVP).
 - Historial de comunicaciones.
 - Dispositivos asociados a brigadistas.
 - Integración futura con radios Baofeng.
@@ -243,7 +252,7 @@ Investigar:
 - Respuestas de asistencia.
 - Mensajes y comunicaciones.
 - Dispositivos.
-- Ubicaciones.
+- Ubicaciones (solo como extensión futura; fuera del MVP).
 - Persistencia local.
 - Sincronización offline.
 - Compatibilidad PostgreSQL / SQLite.

@@ -53,11 +53,14 @@ Construir una aplicación móvil para brigadistas que permita:
 - Recibir convocatorias de emergencia como alertas push.
 - Responder si pueden asistir.
 - Consultar emergencias activas.
-- Compartir ubicación cuando corresponda y exista autorización.
 - Consultar información previamente almacenada.
 - Operar con conectividad intermitente.
 - Mantener información pendiente de sincronización.
 - Recuperarse después de perder y recuperar conectividad.
+
+**Fuera del MVP (decisión del usuario, 2026-11-13):** geolocalización. No pedir
+permisos de ubicación ni incluir librerías de ubicación hasta que se apruebe; la
+arquitectura no debe impedir agregarla después.
 
 ## 4. Notificaciones push y alertas
 
