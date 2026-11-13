@@ -49,7 +49,10 @@ services:
       - postgres_data:/var/lib/postgresql
       - ./backend/docker/postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      # -h 127.0.0.1 (H-1): al inicializar el volumen, el servidor temporal solo
+      # escucha por socket; por TCP no responde hasta que terminó el init, así que
+      # "healthy" implica que emergencia_test y emergencia_shadow ya existen.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 5s
       retries: 20

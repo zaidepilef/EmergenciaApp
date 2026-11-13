@@ -20,7 +20,9 @@ export default async function setup(): Promise<void> {
     shell: true,
     stdio: "pipe",
     encoding: "utf8",
-    env: { ...process.env, DATABASE_URL: url },
+    // Ambas: prisma.config.ts prefiere MIGRATION_DATABASE_URL, que en un .env
+    // local podría apuntar a la base de desarrollo.
+    env: { ...process.env, DATABASE_URL: url, MIGRATION_DATABASE_URL: url },
   });
   if (result.status !== 0) {
     throw new Error(`prisma migrate deploy falló:\n${result.stdout}\n${result.stderr}`);

@@ -17,7 +17,7 @@ Servicio `postgres` de [`compose.yaml`](../../compose.yaml); guía de uso en
 | Puerto | `127.0.0.1:5433` | Bien: no se expone a la red |
 | Volumen | `postgres_data` nombrado en `/var/lib/postgresql` | Bien para PostgreSQL 18 (datos en `/var/lib/postgresql/18`) |
 | Credenciales | `emergencia_dev` / `dev_only_local_password`, sobrescribibles por variable | Solo desarrollo; no son secretos. El usuario es **superusuario** |
-| Healthcheck | `pg_isready` por socket | Ver hallazgo H-1 |
+| Healthcheck | `pg_isready -h 127.0.0.1` (TCP) | H-1 resuelto |
 | Init | `backend/docker/postgres-init/01-create-databases.sql` | Solo corre al crear el volumen. LF garantizado por `.gitattributes` |
 | Rutas | Relativas (`./backend/...`, `../compose.yaml`) | Portables a Linux/macOS |
 | Mongo (`mongo`) | Legado, sin autenticación, en `127.0.0.1` | Aceptable en local; se retira con la arquitectura anterior |
@@ -26,7 +26,7 @@ Servicio `postgres` de [`compose.yaml`](../../compose.yaml); guía de uso en
 
 | ID | Severidad | Hallazgo | Acción |
 |---|---|---|---|
-| H-1 | Baja | Durante la inicialización del volumen, el entrypoint levanta un servidor temporal solo por socket: `pg_isready` sin `-h` puede dar "healthy" antes de que `01-create-databases.sql` termine, y `docker compose up --wait` volvería antes de que existan `emergencia_test`/`emergencia_shadow`. Solo afecta al primer arranque | Derivado a backend-architect: usar `pg_isready -h 127.0.0.1 …`. No se cambió para no forzar la recreación del contenedor en uso |
+| H-1 | Baja | Durante la inicialización del volumen, el entrypoint levanta un servidor temporal solo por socket: `pg_isready` sin `-h` puede dar "healthy" antes de que `01-create-databases.sql` termine, y `docker compose up --wait` volvería antes de que existan `emergencia_test`/`emergencia_shadow`. Solo afecta al primer arranque | **Resuelto** por backend-architect: `pg_isready -h 127.0.0.1 …` en `compose.yaml` |
 | H-2 | Media (producción) | La app y Prisma usan el mismo rol, superusuario y dueño de las tablas: puede desactivar triggers (`ALTER TABLE … DISABLE TRIGGER`, `session_replication_role`) y saltarse append-only | Resuelto con `deploy/postgres/roles.sql` (§2). En local se mantiene el superusuario para pruebas y `migrate reset` |
 | H-3 | Baja | Sin `.gitattributes`: con `core.autocrlf=false` en Windows, un `.sh` o `.sql` de init podía quedar con CRLF y fallar en el contenedor | Corregido: `.gitattributes` fuerza LF en `*.sh`, `*.sql`, `Dockerfile`, `*.conf`, `Caddyfile` |
 | H-4 | Informativa | La migración inicial trae `CREATE SCHEMA IF NOT EXISTS "public"` (generado por Prisma), que exige `CREATE` sobre la base | El script otorga `CREATE` en la base al migrador. Sin cambios para backend-architect |
@@ -109,11 +109,15 @@ docker compose exec -T -e PG_MIGRATOR_PASSWORD -e PG_APP_PASSWORD postgres \
 ```
 
 Después, `DATABASE_URL` del backend apuntaría al migrador para migrar y a la app
-para ejecutar (ver pendientes: hoy el backend usa una sola URL).
+para ejecutar: `MIGRATION_DATABASE_URL` (migrador) la usa Prisma CLI y
+`DATABASE_URL` (app) la usa la API; si falta la primera, Prisma usa la segunda (P-1).
 
-`emergencia_test` **no** debe usar el script de forma permanente: el
+`emergencia_test` **no** queda con el script aplicado de forma permanente: el
 `global-setup` de las pruebas hace `DROP SCHEMA public CASCADE` y la re-migra
-como superusuario en cada corrida.
+como superusuario en cada corrida. La prueba `app-role-permissions.test.ts`
+(P-2) aplica el script en cada corrida con roles exclusivos de prueba
+(`emergencia_test_migrator`, `emergencia_test_app`) y contraseñas aleatorias;
+esos dos roles quedan en la instancia local, sin efecto en `emergencia_dev`.
 
 ### Staging / producción (propuesta, no creada)
 
@@ -133,14 +137,14 @@ como superusuario en cada corrida.
 
 | # | Pendiente | Dueño |
 |---|---|---|
-| P-1 | Dos URLs en el backend: `DATABASE_URL` (app, en ejecución) y una URL de migración (migrador, para `prisma migrate deploy`), en `.env.example` y en la configuración | backend-architect |
-| P-2 | Prueba de integración que corra como rol de la app (la verificación de §5 automatizada) | backend-architect |
+| P-1 | ~~Dos URLs en el backend~~ **Resuelto**: `MIGRATION_DATABASE_URL` (Prisma CLI, migrador) y `DATABASE_URL` (API, app) en `prisma.config.ts` y `.env.example` | backend-architect |
+| P-2 | ~~Prueba como rol de la app~~ **Resuelto**: `backend/test/integration/app-role-permissions.test.ts` | backend-architect |
 | P-3 | Rol de retención/purga si la política de database-architect exige borrar `auth_session`, `notification_delivery` u otras (la app no tiene `DELETE`) | database-architect define, devops implementa |
 | P-4 | Rol de solo lectura para backups (`pg_dump`) y monitoreo, en lugar del superusuario | devops-architect |
 | P-5 | Compose de producción en `deploy/`: PostgreSQL sin `ports`, variables obligatorias (`${VAR:?}`), imagen con digest, red interna, rotación de logs | devops-architect |
 | P-6 | `pg_hba.conf` de producción: `scram-sha-256`, solo red interna, sin `trust` | devops-architect |
 | P-7 | Job de CI/CD que ejecute backup → `roles.sql` → migrate → `roles.sql`, con aprobación manual | devops-architect |
-| P-8 | `pg_isready -h 127.0.0.1` en el healthcheck local (H-1) | backend-architect |
+| P-8 | ~~`pg_isready -h 127.0.0.1` (H-1)~~ **Resuelto** | backend-architect |
 
 ## 5. Cómo se probó (2026-11-13)
 

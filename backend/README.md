@@ -51,7 +51,9 @@ npm run test:integration
 ```
 
 `prisma.config.ts` carga `backend/.env` si existe (Prisma 7 no lo hace solo); una
-variable ya definida en el entorno tiene prioridad sobre el archivo.
+variable ya definida en el entorno tiene prioridad sobre el archivo. Prisma CLI
+usa `MIGRATION_DATABASE_URL` si está definida (rol migrador) y si no
+`DATABASE_URL`; la API usará solo `DATABASE_URL`. En local basta `DATABASE_URL`.
 
 ## Scripts
 
@@ -91,6 +93,16 @@ En [`test/integration/`](test/integration/), con Vitest y `pg`, en serie:
   `UPDATE`/`DELETE` rechazados en las 8 tablas append-only; contraseña provisoria ⇔
   vencimiento; formato de RUT; una sola convocatoria `ACTIVE`; una sola
   resolución final por operación.
+- **Permisos del rol de la aplicación** (P-2 de
+  [`docs/devops/local-environment.md`](../docs/devops/local-environment.md)),
+  `app-role-permissions.test.ts`: aplica `deploy/postgres/roles.sql` a
+  `emergencia_test` con el psql del contenedor (`docker compose exec`), con roles
+  `emergencia_test_migrator`/`emergencia_test_app` y contraseñas aleatorias.
+  `prisma migrate deploy` como migrador vía `MIGRATION_DATABASE_URL` sin
+  pendientes; como app: flujo completo y `row_version` funcionan, `DELETE` solo
+  en `user_role`, y `42501` en `UPDATE`/`DELETE` de las 8 append-only, `TRUNCATE`,
+  `DISABLE TRIGGER`, `session_replication_role`, DDL, `setval`, tablas temporales
+  y `_prisma_migrations`. Requiere el contenedor corriendo (`npm run db:up`).
 
 Salvaguarda: las pruebas se niegan a correr si `TEST_DATABASE_URL` no apunta a
 `localhost`/`127.0.0.1` y a una base cuyo nombre termine en `_test`. Cada prueba
