@@ -23,8 +23,8 @@ emergencia.
 | Rol | Dónde | Necesidad principal |
 |---|---|---|
 | `BRIGADISTA` | App móvil | Recibir una alerta, entenderla y responder en segundos; actualizar su disponibilidad. |
-| `COORDINADOR` | Dashboard web | Crear y activar convocatorias, ver respuestas en tiempo real, supervisar disponibilidad. |
-| `ADMINISTRADOR` | Dashboard web | Gestionar integrantes, roles y cuentas activas/inactivas. |
+| `COORDINADOR` | Dashboard web | Administrar brigadistas, crear, activar y cerrar convocatorias, seguir las respuestas, supervisar disponibilidad. |
+| `ADMINISTRADOR` | Dashboard web | Gestionar usuarios, asignar roles y configuración general. |
 
 Diseñar por rol: cada uno ve solo lo que necesita.
 
@@ -119,14 +119,17 @@ estados de sincronización y entrega definidos por database-architect.
 
 Para `COORDINADOR`:
 - Crear, activar, consultar y cerrar convocatorias.
-- Ver respuestas por brigadista en tiempo real.
+- Ver respuestas por brigadista (`VOY`, `NO_PUEDO`, pendiente), actualizadas
+  periódicamente cada 10–15 s; indicar la hora de la última actualización.
+- Distinguir entrega de la notificación y respuesta del brigadista.
+- Administrar brigadistas: alta, edición, activación y desactivación.
 - Consultar disponibilidad y su vigencia.
 - Consultar historial de emergencias.
 - Identificar rápidamente situaciones importantes.
 
 Para `ADMINISTRADOR`:
-- Gestionar integrantes y roles.
-- Identificar cuentas activas e inactivas.
+- Gestionar usuarios y asignar roles.
+- Configuración general.
 
 Facilitar la supervisión sin sobrecargar con información innecesaria.
 
@@ -176,7 +179,7 @@ Documentar el estado real: no presentar como aprobado lo que es una propuesta.
 Coordinar, siempre a través del agente principal, con:
 
 - `mobile-architect`: viabilidad e implementación de la experiencia móvil.
-- `web-architect`: implementación del dashboard (pendiente de crear).
+- `web-architect`: implementación del dashboard.
 - `backend-architect`: información y estados que la interfaz necesita mostrar.
 - `database-architect`: estados de sincronización y entrega.
 - `mobile-tester`: validación de la experiencia en dispositivo.

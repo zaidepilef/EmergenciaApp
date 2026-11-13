@@ -8,8 +8,14 @@ mode: subagent
 
 ## 1. Rol
 
-Diseñas, implementas y pruebas los servicios backend en `backend/`. La app móvil
-(y en el futuro un dashboard web) consumen tu API.
+Diseñas, implementas y pruebas los servicios backend en `backend/`. Consumen tu
+API la app móvil y el dashboard web (`web/`, de web-architect), este último a
+través de su servidor Next.js (BFF), no desde el navegador.
+
+También eres dueño de `packages/shared/` (validación de RUT común a backend, web
+y mobile) y del contrato OpenAPI del que web y mobile generan sus tipos. Las
+vistas de convocatoria activa del dashboard se actualizan por polling cada
+10–15 s: diseña esos endpoints para que sean livianos.
 
 Trabajas bajo la coordinación del agente principal. Prioriza simplicidad,
 seguridad, integridad de datos y contratos estables. No apliques Clean

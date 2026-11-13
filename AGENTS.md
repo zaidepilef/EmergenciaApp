@@ -19,8 +19,22 @@ EmergenciaApp/
 ├── openspec/          # Cambios y especificaciones formales
 ├── mobile/            # App móvil (pendiente)
 ├── backend/           # API / backend (pendiente)
+├── web/               # Dashboard Next.js (se migra desde src/)
+├── packages/shared/   # Validación de RUT compartida (pendiente)
 └── README.md
 ```
+
+### Decisiones del dashboard web (2026-11-13)
+
+| Tema | Decisión |
+|---|---|
+| Ubicación | `web/`, migrando la app Next.js actual desde `src/` |
+| Autenticación | BFF: Next.js llama a la API y guarda el token en cookie `httpOnly`; el navegador no ve el token. Se retiran `next-auth`, `mongodb` y `@node-rs/argon2` del proyecto web |
+| Respuestas en vivo | Polling cada 10–15 s (sin SSE ni WebSockets en el MVP) |
+| Tipos y RUT | Tipos generados desde OpenAPI (`openapi-typescript`); validación de RUT en `packages/shared/`, común a backend, web y mobile |
+| Pruebas web | Las hace web-architect: Vitest + Testing Library + Playwright |
+| Conectividad | El dashboard requiere conexión; offline-first es solo para la app móvil |
+| Dependencia | web-architect trabaja sobre el contrato OpenAPI aprobado, sin mocks previos |
 
 ### Estado de la transición
 
@@ -51,7 +65,7 @@ Orden de incorporación:
 | 4 | Arquitecto / desarrollador backend | `.opencode/agents/backend-architect.md` | Definido |
 | 5 | Tester móvil WYSIWYG | `.opencode/agents/mobile-tester.md` | Definido |
 | 6 | CI/CD en VPS | `.opencode/agents/cicd-vps.md` | Pendiente |
-| 7 | Arquitecto web (dashboard) | `.opencode/agents/web-architect.md` | Pendiente |
+| 7 | Arquitecto web (dashboard) | `.opencode/agents/web-architect.md` | Definido |
 
 Los nombres de archivo de los subagentes pendientes son tentativos y se fijan al
 crearlos.
@@ -110,12 +124,16 @@ Linux y macOS) y verifica lo que el usuario ve y hace: pantallas, convocatorias,
 push, modo sin conexión. Entrega informes con evidencia y veredicto. No modifica
 código de producción; reporta los hallazgos al área responsable.
 
-### 7. web-architect (pendiente)
+### 7. web-architect
 
-Implementará el dashboard web del `COORDINADOR` y el `ADMINISTRADOR` según el
-diseño de ui-ux-designer, consumiendo la API de backend-architect. Candidato:
-reutilizar la app Next.js actual (`src/`) como dashboard, sin acceso directo a la
-base de datos.
+Dashboard Next.js en `web/` para `COORDINADOR` (brigadistas, convocatorias,
+panel) y `ADMINISTRADOR` (usuarios, roles, configuración). Consume solo la API
+mediante un BFF con cookie `httpOnly`; sin base de datos ni ORM. Muestra
+respuestas `VOY` / `NO_PUEDO` / pendiente y distingue entrega de respuesta.
+Dueño de sus pruebas (Vitest + Playwright). Documenta en `docs/web/`.
+
+Primera misión: plan de migración `src/` → `web/`, rutas por rol, diseño del BFF,
+tipos OpenAPI, polling y plan de pruebas, sin código hasta aprobación.
 
 ### Reparto de responsabilidades compartidas
 
@@ -124,7 +142,11 @@ base de datos.
 | Esquema SQLite, sincronización y conflictos | database-architect | mobile-architect |
 | Estados de entrega de mensajes y convocatorias | database-architect | mobile-architect y backend-architect |
 | Notificaciones push | mobile-architect (dispositivo), backend-architect (envío) | ambos |
-| Contrato API (OpenAPI) | backend-architect, acordado con mobile-architect | ambos |
+| Contrato API (OpenAPI) | backend-architect, acordado con mobile-architect y web-architect | los tres |
+| Tipos generados desde OpenAPI | backend-architect (contrato) | web-architect y mobile-architect |
+| Paquete compartido de RUT (`packages/shared/`) | backend-architect | backend, web y mobile lo consumen |
+| Sesión web (BFF, cookie `httpOnly`) | web-architect | web-architect |
+| Pruebas del dashboard (Vitest, Playwright) | web-architect | web-architect |
 | Contrato de sincronización | database-architect (estrategia), backend + mobile (contrato) | backend-architect y mobile-architect |
 | Acceso a datos / ORM (ADR) | database-architect y backend-architect | backend-architect |
 | Sistema visual y flujos | ui-ux-designer | mobile-architect (app) y web-architect (dashboard) |
@@ -142,11 +164,9 @@ base de datos.
 
 Decisiones que el usuario debe tomar antes de que los subagentes avancen:
 
-1. **Dashboard web:** asignado a `web-architect` (pendiente de definir). Falta
-   confirmar si se reutiliza la app Next.js actual.
-2. **Geolocalización:** el README dice "No incluye GPS ni geolocalización", pero
+1. **Geolocalización:** el README dice "No incluye GPS ni geolocalización", pero
    mobile-architect y database-architect contemplan ubicación y coordenadas.
-3. **ORM:** la decisión previa D-13 era "sin ORM"; backend-architect propone
+2. **ORM:** la decisión previa D-13 era "sin ORM"; backend-architect propone
    Prisma como candidato. Se resuelve con un ADR conjunto.
 
 ## Convenciones generales
