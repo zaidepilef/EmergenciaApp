@@ -1,6 +1,9 @@
 # Riesgos, plan por etapas y decisiones pendientes
 
-> **PROPUESTA PARA APROBACIÓN.**
+> **Decisiones D-B1 a D-B6 APROBADAS por el usuario (2026-11-13)**, con las
+> recomendaciones de la tabla. Etapa 1 cerrada: contrato v1 aprobado el 2026-11-14
+> ([`openapi-v1.md`](openapi-v1.md)); la implementación (etapa 2) espera
+> autorización.
 
 ## 1. Decisiones que se piden al usuario
 

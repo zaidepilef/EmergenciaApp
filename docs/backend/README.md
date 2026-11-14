@@ -1,8 +1,8 @@
 # Backend — documentación (backend-architect)
 
-> **Estado (2026-11-13): PROPUESTA PARA APROBACIÓN.** Primera misión de
-> backend-architect: diagnóstico y propuesta, **sin código de la API ni
-> dependencias nuevas**. Lo implementado hasta hoy en `backend/` es solo el
+> **Estado (2026-11-13):** propuesta aprobada (D-B1 a D-B6 y alcance del MVP).
+> **Contrato OpenAPI v1 aprobado (2026-11-14)** ([`openapi-v1.md`](openapi-v1.md)); sin
+> código de la API hasta autorizar la etapa 2. `packages/shared/rut` implementado y probado. Lo implementado hasta hoy en `backend/` es solo el
 > esquema Prisma, las migraciones y las pruebas de integración de la base (ver
 > [`backend/README.md`](../../backend/README.md)).
 
@@ -10,6 +10,7 @@
 
 | Documento | Contenido |
 |---|---|
+| [openapi-v1.md](openapi-v1.md) | **Guía de revisión del contrato v1**: alcance, requisitos fundamentales, decisiones C1–C14 |
 | [architecture.md](architecture.md) | Diagnóstico, framework HTTP, estructura de `backend/`, acceso a datos con Prisma (ADR-B1), contrato OpenAPI, errores, logs, configuración |
 | [endpoints.md](endpoints.md) | Mapa de endpoints del MVP por rol, autorización y el endpoint liviano de polling del dashboard |
 | [authentication.md](authentication.md) | RUT, Argon2id, tokens de acceso y renovación, cliente móvil y BFF web, contraseña provisoria, revocación, rate limiting |

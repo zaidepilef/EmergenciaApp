@@ -1,0 +1,28 @@
+{
+  "name": "@emergencia/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Código compartido entre backend, web y mobile. Por ahora: validación de RUT.",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "exports": {
+    "./rut": {
+      "types": "./dist/rut.d.ts",
+      "default": "./dist/rut.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "vitest": "5.0.5"
+  }
+}

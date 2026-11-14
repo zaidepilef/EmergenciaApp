@@ -1,0 +1,3185 @@
+openapi: 3.1.0
+info:
+  title: EmergenciaApp API
+  version: 1.0.0
+  summary: API de convocatorias de emergencia para una brigada (app móvil y dashboard web).
+  description: |
+    **BORRADOR PARA REVISIÓN — no implementado.** Contrato v1 del MVP, escrito
+    antes que el código (D-B5). La guía de revisión está en
+    `docs/backend/openapi-v1.md`.
+
+    ## Convenciones
+
+    - Prefijo `/v1`. Un cambio incompatible exige `/v2` o convivencia acordada:
+      una app instalada puede pasar semanas sin actualizarse.
+    - JSON en UTF-8. Identificadores en inglés; textos visibles los define
+      ui-ux-designer a partir de `code`.
+    - Fechas ISO 8601 en **UTC con milisegundos** (`2026-11-13T12:00:05.120Z`).
+      La zona `America/Santiago` solo se aplica al presentar.
+    - Identificadores UUID. Los que genera el cliente (`device.id`,
+      `operationId`, `id` de avisos y resoluciones) deben ser UUID v7.
+    - `rowVersion` es un entero de la secuencia global de sincronización
+      (cabe en un entero seguro de JavaScript).
+    - Errores en `application/problem+json` (RFC 9457) con un `code` estable.
+    - Paginación por cursor opaco (`cursor`, `limit` ≤ 100); nunca por `offset`.
+    - Todas las respuestas llevan `X-Request-Id`.
+    - El servidor **es la autoridad**: valida, autoriza y decide el resultado de
+      cada operación; ningún cliente decide estados por su cuenta.
+
+    ## Capacidades (evaluadas en el servidor en cada petición)
+
+    | Capacidad | Condición |
+    |---|---|
+    | `ADMIN` | Rol `ADMINISTRADOR` |
+    | `COORD` | Rol `COORDINADOR` |
+    | `BRIG` | Perfil de brigadista activo |
+
+    Toda ruta exige usuario activo y sesión `FULL` vigente salvo las marcadas
+    con `x-session-scope: ANY` (aceptan también `PASSWORD_CHANGE_ONLY`) o sin
+    seguridad (públicas). El rol **nunca** viaja en el token.
+
+    Extensiones usadas por las pruebas de contrato:
+    `x-capabilities` (alguna basta), `x-session-scope` (`FULL` o `ANY`),
+    `x-client` (`MOBILE`, `WEB`), `x-idempotency`.
+  contact:
+    name: backend-architect
+  license:
+    name: Privado
+    identifier: LicenseRef-Proprietary
+
+servers:
+  - url: /
+    description: Mismo origen (el BFF web y la app usan la URL pública configurada)
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: health
+    description: Salud del proceso (para el contenedor y el proxy)
+  - name: auth
+    description: Inicio de sesión, renovación, contraseña y cuenta propia
+  - name: sync
+    description: Sincronización offline-first de la app móvil
+  - name: brigadista
+    description: Lecturas de respaldo para la app móvil
+  - name: dashboard
+    description: Preparación de la brigada (coordinador)
+  - name: emergencies
+    description: Convocatorias, avisos y convocados (coordinador)
+  - name: reviews
+    description: Operaciones en conflicto o rechazadas (coordinador)
+  - name: admin
+    description: Usuarios, roles, dispositivos y auditoría (administrador)
+
+paths:
+  # ───────────────────────────── Salud ─────────────────────────────
+  /health/live:
+    get:
+      tags: [health]
+      operationId: getHealthLive
+      summary: El proceso responde
+      security: []
+      responses:
+        "200":
+          description: Vivo
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthStatus" }
+
+  /health/ready:
+    get:
+      tags: [health]
+      operationId: getHealthReady
+      summary: El proceso puede atender (la base responde)
+      security: []
+      responses:
+        "200":
+          description: Listo
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthStatus" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  # ───────────────────────────── Autenticación ─────────────────────────────
+  /v1/auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Iniciar sesión con RUT y contraseña
+      description: |
+        - El RUT se acepta con o sin puntos y guion; el servidor lo normaliza
+          y valida el dígito verificador (`packages/shared/rut`).
+        - Cualquier fallo de credenciales (RUT inexistente, contraseña
+          incorrecta, provisoria vencida, cuenta inactiva) responde
+          `401 INVALID_CREDENTIALS`, con tiempo similar, sin revelar cuál.
+        - Con contraseña provisoria la sesión nace `PASSWORD_CHANGE_ONLY`.
+        - **Móvil** (`clientType: MOBILE`) registra o actualiza el dispositivo.
+          Si `device.id` pertenece a otro usuario → `409 DEVICE_ID_CONFLICT`;
+          si fue revocado → `403 DEVICE_REVOKED`. En ambos casos la app genera
+          un `device.id` nuevo y reintenta.
+        - Vida del token de renovación: 30 días móvil, 12 h web (D-B2).
+        - Límites: 10 / 15 min por IP y 5 / 15 min por RUT.
+      security: []
+      x-client: [MOBILE, WEB]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Sesión creada
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            Cache-Control: { $ref: "#/components/headers/CacheControlNoStore" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/auth/refresh:
+    post:
+      tags: [auth]
+      operationId: refreshSession
+      summary: Renovar tokens (rotación del token de renovación)
+      description: |
+        Cada uso entrega un token de renovación **nuevo**; el anterior queda
+        reemplazado.
+
+        - Presentar un token ya reemplazado fuera de la ventana de gracia
+          revoca **toda la familia** de sesiones (`REUSE_DETECTED`) y responde
+          `401`.
+        - Dentro de los **10 s** posteriores a una rotación (la app perdió la
+          respuesta por un corte de red), presentar el token anterior responde
+          `409 REFRESH_RACE` sin revocar: la app reintenta con el token más
+          nuevo que tenga o vuelve al login.
+        - Usuario inactivo, contraseña restablecida o sesión revocada → `401`.
+      security: []
+      x-client: [MOBILE, WEB]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RefreshRequest" }
+      responses:
+        "200":
+          description: Tokens renovados
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            Cache-Control: { $ref: "#/components/headers/CacheControlNoStore" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthTokens" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: Cerrar la sesión actual
+      description: |
+        Revoca la sesión (`LOGOUT`). En móvil además **borra el token push** de
+        ese dispositivo: un teléfono sin sesión deja de sonar. El brigadista
+        sigue convocado (bandeja interna) y el panel lo muestra como
+        `NO_DEVICE`. Idempotente: una sesión ya revocada también responde `204`.
+      x-session-scope: ANY
+      x-client: [MOBILE, WEB]
+      responses:
+        "204":
+          description: Sesión cerrada
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/auth/password:
+    post:
+      tags: [auth]
+      operationId: changePassword
+      summary: Cambiar la contraseña propia
+      description: |
+        Obligatorio con contraseña provisoria. En una transacción: nuevo hash,
+        fin de la provisoria, `credential_version + 1`, revocación de **todas**
+        las sesiones del usuario (incluida la actual) y emisión de una sesión
+        `FULL` nueva para el mismo cliente y dispositivo.
+
+        Reglas: 10–128 caracteres, distinta de la actual, sin contener el RUT.
+        Límite: 5 / 15 min por usuario.
+      x-session-scope: ANY
+      x-client: [MOBILE, WEB]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChangePasswordRequest" }
+      responses:
+        "200":
+          description: Contraseña cambiada; sesión FULL nueva
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            Cache-Control: { $ref: "#/components/headers/CacheControlNoStore" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/me:
+    get:
+      tags: [auth]
+      operationId: getMe
+      summary: Usuario actual, capacidades y estado de la sesión
+      x-session-scope: ANY
+      x-client: [MOBILE, WEB]
+      responses:
+        "200":
+          description: Usuario actual
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/me/devices:
+    get:
+      tags: [auth]
+      operationId: listMyDevices
+      summary: Mis dispositivos
+      x-client: [MOBILE, WEB]
+      responses:
+        "200":
+          description: Dispositivos del usuario, incluidos los revocados
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/me/devices/{deviceId}/revoke:
+    post:
+      tags: [auth]
+      operationId: revokeMyDevice
+      summary: Revocar uno de mis dispositivos (teléfono perdido)
+      description: |
+        Revoca el dispositivo y sus sesiones (`DEVICE_REVOKED`), borra su
+        token push y deja de enviarle push. Idempotente. Un dispositivo ajeno
+        responde `404`.
+      x-client: [MOBILE, WEB]
+      x-idempotency: state
+      parameters:
+        - $ref: "#/components/parameters/DeviceIdPath"
+      responses:
+        "200":
+          description: Dispositivo revocado
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Device" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  # ───────────────────────────── Sincronización ─────────────────────────────
+  /v1/sync/push:
+    post:
+      tags: [sync]
+      operationId: syncPush
+      summary: Enviar operaciones creadas en el teléfono (con o sin conexión)
+      description: |
+        Exige sesión **móvil**; el dispositivo sale de la sesión, nunca del
+        cuerpo. El usuario no necesita ser brigadista activo para enviar
+        (si no lo es, sus operaciones se rechazan con su motivo).
+
+        **Garantías**
+
+        1. **Idempotencia:** cada operación se identifica por `operationId`
+           (= id de la fila que crea). Reenviarla devuelve el resultado
+           guardado con `duplicate: true` y no escribe nada. Reintentar un lote
+           completo tras un error de red o `5xx` es siempre seguro.
+        2. **Aislamiento:** cada operación se procesa en su propia transacción,
+           en orden de `deviceSeq`; una inválida no arrastra a las demás.
+        3. **Autoridad del servidor:** el servidor valida, autoriza y decide
+           `APPLIED` / `SUPERSEDED` / `CONFLICT` / `REJECTED`. El teléfono
+           adopta el estado que luego descarga con `/v1/sync/pull`.
+        4. **Tiempo sin depender solo del reloj del teléfono:** el orden dentro
+           de un teléfono lo da `deviceSeq`; entre fuentes, `estimatedAt`
+           calculado por el servidor con el reloj monotónico, el desfase
+           medido con `clock` o, en último caso, la hora de recepción. Nada
+           queda en el futuro respecto de la recepción. Ventana de ambigüedad:
+           60 s → `CONFLICT` para revisión del coordinador.
+        5. **Duplicados concurrentes:** si el mismo lote llega dos veces a la
+           vez (reintento mientras el primero sigue en curso), la segunda
+           transacción espera el candado de versión, encuentra la operación ya
+           guardada y responde `duplicate: true`. Un `operationId` repetido con
+           otro contenido devuelve el resultado **guardado** (el primero manda)
+           y se registra en auditoría.
+        6. **Nada se pierde en silencio:** toda operación queda registrada en
+           `sync_operation`, también las rechazadas, y el resultado dice el
+           motivo. Solo dos casos no pueden tener fila y van a auditoría
+           (deduplicada por `operationId`, sin el payload): un tipo que el
+           modelo no conoce (`UNSUPPORTED_OPERATION`; al reenviarlo se vuelve a
+           evaluar, con `duplicate: false`) y un `operationId` que ya existe
+           para **otro** usuario (`INVALID_PAYLOAD`). En ambos el teléfono
+           conserva la operación y su payload.
+        7. **Ninguna operación queda terminal por un error de numeración:** si
+           un `deviceSeq` del lote ya pertenece a otra operación de este
+           dispositivo (base local recreada con el mismo `device.id`), el
+           servidor responde `409 DEVICE_SEQ_CONFLICT` **sin procesar nada**.
+           La app no marca nada como rechazado: genera un `device.id` nuevo,
+           inicia sesión de nuevo con él y reenvía **las mismas** operaciones
+           (mismos `operationId` y `deviceSeq`).
+
+        **Datos sensibles:** el token push de `REGISTER_PUSH_TOKEN` no se guarda
+        en el registro de operaciones (solo su hash); vive únicamente en el
+        dispositivo del servidor.
+
+        **Validación:** el sobre del lote (`clock`, lista, `operationId`,
+        `deviceSeq`) se valida entero → `400`. El resto de cada operación se
+        valida **por separado**: si no cumple su esquema, esa operación sale
+        `REJECTED INVALID_PAYLOAD` y las demás siguen.
+
+        **Límites:** 1–50 operaciones, cuerpo ≤ 256 KiB (`413`: la app parte
+        el lote). Respuesta `200` aunque haya rechazos.
+
+        **Errores del lote:** `401` (renovar o volver al login),
+        `403 DEVICE_REVOKED` (cerrar sesión local), `409 DEVICE_SEQ_CONFLICT`
+        (garantía 7), `403 MOBILE_SESSION_REQUIRED`,
+        `403 PASSWORD_CHANGE_REQUIRED`, `429`, `5xx` (reintentar con espera
+        progresiva). Una cuenta desactivada recibe `200` con cada operación
+        `REJECTED ACCOUNT_INACTIVE`, para que la app muestre el motivo.
+      x-client: [MOBILE]
+      x-idempotency: operationId
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SyncPushRequest" }
+      responses:
+        "200":
+          description: Un resultado por operación, en el mismo orden
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncPushResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  /v1/sync/pull:
+    post:
+      tags: [sync]
+      operationId: syncPull
+      summary: Descargar cambios desde los cursores del teléfono
+      description: |
+        Sin efectos salvo `device.last_seen_at`. Exige sesión móvil.
+
+        1. Toda la descarga es **una** instantánea coherente
+           (`REPEATABLE READ READ ONLY`).
+        2. Por ámbito: filas con `rowVersion > cursor`, en orden, hasta
+           `limit`. El cursor nuevo es la versión de la última fila devuelta.
+           Entrega "al menos una vez": la app aplica cada fila con upsert por
+           `id` **solo si** su `rowVersion` es mayor que la local, y guarda el
+           cursor en la misma transacción SQLite que las filas.
+        3. Si `syncEpoch` es nulo o distinto del vigente (restauración de un
+           backup): `epochChanged: true`, se ignoran los cursores y se descarga
+           desde 0. La app debe además **reenviar** por `/v1/sync/push` sus
+           operaciones de los últimos 7 días (idempotente).
+        4. **Integridad referencial de la respuesta:** toda convocatoria
+           referida por una fila de `recipients` o de `notices` de esta
+           respuesta que **no** esté en `emergencies.rows` de esta misma
+           respuesta va completa, con sus avisos, en `lateAdditions`, sin
+           importar su versión (convocado agregado tarde, o ámbito
+           `emergencies` paginado). Repetirla es inofensivo (upsert). La app
+           aplica en orden padre → hijo (`emergencies`, `lateAdditions`,
+           `notices`, `recipients`, `responses`) en una sola transacción.
+        5. Si algún ámbito trae `hasMore: true`, la app repite la llamada con
+           los cursores nuevos.
+
+        El teléfono solo recibe datos **propios**: nunca de otros brigadistas
+        ni el RUT.
+      x-client: [MOBILE]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SyncPullRequest" }
+      responses:
+        "200":
+          description: Cambios por ámbito
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncPullResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyRequests" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/ServiceUnavailable" }
+
+  # ───────────────────────────── Brigadista ─────────────────────────────
+  /v1/me/active-emergency:
+    get:
+      tags: [brigadista]
+      operationId: getMyActiveEmergency
+      summary: Convocatoria activa en la que estoy convocado (respaldo del push)
+      description: |
+        La app la consulta siempre al abrirse y al recuperar conexión, aunque no
+        haya llegado ningún push. `204` si no hay convocatoria activa o si el
+        usuario no figura en ella. No reemplaza a `/v1/sync/pull`: es la vía
+        rápida para mostrar la convocatoria antes de terminar la descarga.
+      x-capabilities: [BRIG]
+      x-client: [MOBILE]
+      responses:
+        "200":
+          description: Convocatoria activa, sus avisos y mi fila de convocado
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MyActiveEmergency" }
+        "204":
+          description: Sin convocatoria activa para este usuario
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  # ───────────────────────────── Dashboard ─────────────────────────────
+  /v1/dashboard/summary:
+    get:
+      tags: [dashboard]
+      operationId: getDashboardSummary
+      summary: Preparación de la brigada y convocatoria activa
+      description: |
+        La preparación es **informativa**: nunca cambia quién es convocado.
+        Toda convocatoria incluye a todos los brigadistas activos.
+      x-capabilities: [COORD, ADMIN]
+      x-client: [WEB]
+      responses:
+        "200":
+          description: Resumen
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DashboardSummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/brigadistas:
+    get:
+      tags: [dashboard]
+      operationId: listBrigadistas
+      summary: Brigadistas con su preparación (dispositivos, push, última conexión)
+      x-capabilities: [COORD, ADMIN]
+      x-client: [WEB]
+      parameters:
+        - name: active
+          in: query
+          description: Filtra por perfil de brigadista activo. Por omisión, solo activos.
+          schema: { type: boolean, default: true }
+        - name: readiness
+          in: query
+          schema: { $ref: "#/components/schemas/ReadinessState" }
+        - name: q
+          in: query
+          description: Búsqueda por nombre (prefijo, sin distinguir mayúsculas ni tildes)
+          schema: { type: string, minLength: 1, maxLength: 60 }
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Página de brigadistas, ordenados por nombre
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrigadistaPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  # ───────────────────────────── Convocatorias ─────────────────────────────
+  /v1/emergencies:
+    get:
+      tags: [emergencies]
+      operationId: listEmergencies
+      summary: Historial de convocatorias (más recientes primero)
+      x-capabilities: [COORD, ADMIN]
+      x-client: [WEB]
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/EmergencyStatus" }
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Página de convocatorias (sin descartadas)
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmergencyPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      tags: [emergencies]
+      operationId: createEmergency
+      summary: Crear un borrador de convocatoria
+      description: |
+        `id` lo genera el cliente: repetir la petición con el mismo `id` y el
+        mismo contenido devuelve `200` con el borrador existente; con otro
+        contenido, `409 IDEMPOTENCY_KEY_REUSED`.
+      x-capabilities: [COORD]
+      x-client: [WEB]
+      x-idempotency: body.id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmergencyCreateRequest" }
+      responses:
+        "201":
+          description: Borrador creado
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmergencyDetail" }
+        "200":
+          description: Repetición; el borrador ya existía
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmergencyDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/emergencies/active/summary:
+    get:
+      tags: [emergencies]
+      operationId: getActiveEmergencySummary
+      summary: Conteos de la convocatoria activa (polling liviano, 10–15 s)
+      description: |
+        Responde `ETag`. Con `If-None-Match` igual al vigente: `304` sin cuerpo
+        y sin calcular el detalle. Sin convocatoria activa: `200` con
+        `emergency: null`.
+      x-capabilities: [COORD, ADMIN]
+      x-client: [WEB]
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Resumen
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            ETag: { $ref: "#/components/headers/ETag" }
+            Cache-Control: { $ref: "#/components/headers/CacheControlNoCache" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActiveEmergencySummary" }
+        "304": { $ref: "#/components/responses/NotModified" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/emergencies/{emergencyId}:
+    parameters:
+      - $ref: "#/components/parameters/EmergencyIdPath"
+    get:
+      tags: [emergencies]
+      operationId: getEmergency
+      summary: Detalle de una convocatoria con sus avisos
+      x-capabilities: [COORD, ADMIN]
+      x-client: [WEB]
+      responses:
+        "200":
+          description: Convocatoria
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmergencyDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    patch:
+      tags: [emergencies]
+      operationId: updateEmergencyDraft
+      summary: Editar un borrador
+      description: |
+        Solo `DRAFT` (si no, `409 EMERGENCY_NOT_DRAFT`). Exige `If-Match` con el
+        `ETag` leído, para no pisar a otro coordinador: sin él `428`, distinto
+        `412`. Para cambiar una convocatoria **activa** se emite un aviso
+        (`POST …/notices`), que queda en el historial y se notifica.
+      x-capabilities: [COORD]
+      x-client: [WEB]
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmergencyDraftUpdate" }
+      responses:
+        "200":
+          description: Borrador actualizado
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmergencyDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "428": { $ref: "#/components/responses/PreconditionRequired" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      tags: [emergencies]
+      operationId: discardEmergencyDraft
+      summary: Descartar un borrador (borrado lógico)
+      description: Solo `DRAFT`. Idempotente sobre un borrador ya descartado (`204`).
+      x-capabilities: [COORD]
+      x-client: [WEB]
+      x-idempotency: state
+      responses:
+        "204":
+          description: Descartado
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/emergencies/{emergencyId}/activate:
+    parameters:
+      - $ref: "#/components/parameters/EmergencyIdPath"
+    post:
+      tags: [emergencies]
+      operationId: activateEmergency
+      summary: Activar la convocatoria y notificar a todos los brigadistas activos
+      description: |
+        En **una** transacción corta (sin llamadas de red):
+
+        1. `DRAFT → ACTIVE` (a lo sumo una activa: si hay otra,
+           `409 EMERGENCY_ALREADY_ACTIVE`).
+        2. Crea un convocado por **cada** brigadista con cuenta activa y perfil
+           de brigadista activo. **No** se mira la disponibilidad declarada, la
+           última conexión, la versión de la app ni si tiene sesión abierta.
+        3. Crea el aviso `ACTIVATION`.
+        4. Encola un push por convocado × dispositivo no revocado con token
+           válido, **sin filtrar por antigüedad** de `lastSeenAt`. Un
+           brigadista con dos teléfonos recibe en ambos: es una entrega por
+           dispositivo, no un duplicado. `delivery_once_uq` impide una segunda
+           entrega del mismo aviso al mismo dispositivo.
+
+        El push se envía **después** del commit, desde el worker. Si el
+        proveedor falla, la convocatoria igual existe en la bandeja de cada
+        convocado y llega por sincronización; un brigadista sin dispositivo
+        aparece como `NO_DEVICE` en el panel.
+
+        Idempotente por estado: si ya está `ACTIVE`, `200` con el estado
+        actual. Si está `CLOSED`, `409 EMERGENCY_CLOSED`.
+      x-capabilities: [COORD]
+      x-client: [WEB]
+      x-idempotency: state
+      responses:
+        "200":
+          description: Activada (o ya estaba activa)
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActivationResult" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/emergencies/{emergencyId}/notices:
+    parameters:
+      - $ref: "#/components/parameters/EmergencyIdPath"
+    post:
+      tags: [emergencies]
+      operationId: createEmergencyNotice
+      summary: Emitir un aviso de actualización sobre una convocatoria activa
+      description: |
+        Cambio de punto de encuentro, segundo foco, instrucciones nuevas. En
+        una transacción: aplica los cambios opcionales a la convocatoria, crea
+        el aviso `UPDATE` y encola el push a **todos** los convocados.
+
+        `id` lo genera el cliente (idempotencia): mismo `id` y contenido →
+        `200` con el aviso existente; distinto contenido →
+        `409 IDEMPOTENCY_KEY_REUSED`. Solo `ACTIVE`
+        (si no, `409 EMERGENCY_NOT_ACTIVE`).
+      x-capabilities: [COORD]
+      x-client: [WEB]
+      x-idempotency: body.id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NoticeCreateRequest" }
+      responses:
+        "201":
+          description: Aviso emitido
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmergencyDetail" }
+        "200":
+          description: Repetición; el aviso ya existía
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmergencyDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/emergencies/{emergencyId}/close:
+    parameters:
+      - $ref: "#/components/parameters/EmergencyIdPath"
+    post:
+      tags: [emergencies]
+      operationId: closeEmergency
+      summary: Cerrar la convocatoria
+      description: |
+        `ACTIVE → CLOSED`, aviso `CLOSURE` y push a todos los convocados (sin
+        re-aviso). Los re-avisos pendientes de avisos anteriores se cancelan.
+        Respuestas tomadas sin conexión **antes** del cierre que lleguen
+        después se siguen aceptando (marcadas `lateSyncAfterClose`).
+
+        Idempotente por estado: ya `CLOSED` → `200`. `DRAFT` →
+        `409 EMERGENCY_NOT_ACTIVE`.
+      x-capabilities: [COORD]
+      x-client: [WEB]
+      x-idempotency: state
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EmergencyCloseRequest" }
+      responses:
+        "200":
+          description: Cerrada (o ya estaba cerrada)
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            ETag: { $ref: "#/components/headers/ETag" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EmergencyDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/emergencies/{emergencyId}/recipients:
+    parameters:
+      - $ref: "#/components/parameters/EmergencyIdPath"
+    get:
+      tags: [emergencies]
+      operationId: listEmergencyRecipients
+      summary: Estado por convocado (polling, 10–15 s)
+      description: |
+        Separa **llegada** (`reach`, por aviso) de **respuesta**
+        (`response`). "Recibido" solo se muestra con un acuse del teléfono;
+        un éxito del proveedor push es `PROVIDER_ACCEPTED`, nunca "recibido".
+
+        `ETag` / `If-None-Match` como en el resumen: `304` si nada cambió
+        (convocatoria, avisos, convocados, respuestas, acuses y entregas).
+      x-capabilities: [COORD, ADMIN]
+      x-client: [WEB]
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Convocados con su estado
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            ETag: { $ref: "#/components/headers/ETag" }
+            Cache-Control: { $ref: "#/components/headers/CacheControlNoCache" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecipientList" }
+        "304": { $ref: "#/components/responses/NotModified" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      tags: [emergencies]
+      operationId: addLateRecipient
+      summary: Agregar un convocado tarde (cuenta activada después, recién llegado)
+      description: |
+        Solo `ACTIVE`. Crea el convocado (`LATE_ADDITION`, con autor) y encola
+        el push del aviso `ACTIVATION`; el teléfono descarga el resto de los
+        avisos por sincronización. El motivo queda en auditoría.
+
+        **Sin notificaciones duplicadas:** el push se encola **solo** si la fila
+        de convocado se insertó en esta transacción. Si ya existía (por la
+        activación, por otro coordinador o por una reactivación automática),
+        no se encola nada nuevo.
+
+        Idempotente por la pareja convocatoria × brigadista: si ya está
+        convocado, `200` con su fila. Perfil inactivo →
+        `409 BRIGADISTA_INACTIVE`.
+      x-capabilities: [COORD]
+      x-client: [WEB]
+      x-idempotency: natural
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LateRecipientRequest" }
+      responses:
+        "201":
+          description: Convocado agregado
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecipientStatus" }
+        "200":
+          description: Ya estaba convocado
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecipientStatus" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/recipients/{recipientId}/history:
+    get:
+      tags: [emergencies]
+      operationId: getRecipientHistory
+      summary: Historial de un convocado (respuestas, acuses y entregas)
+      x-capabilities: [COORD, ADMIN]
+      x-client: [WEB]
+      parameters:
+        - $ref: "#/components/parameters/RecipientIdPath"
+      responses:
+        "200":
+          description: Historial completo, en orden cronológico
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecipientHistory" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  # ───────────────────────────── Revisiones ─────────────────────────────
+  /v1/sync-reviews:
+    get:
+      tags: [reviews]
+      operationId: listSyncReviews
+      summary: Operaciones en conflicto o rechazadas
+      description: |
+        Por omisión, solo las pendientes (sin resolución final). Más recientes
+        primero.
+      x-capabilities: [COORD, ADMIN]
+      x-client: [WEB]
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [PENDING, RESOLVED, ALL]
+            default: PENDING
+        - name: emergencyId
+          in: query
+          schema: { $ref: "#/components/schemas/Uuid" }
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Página de revisiones
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncReviewPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/sync-reviews/{operationId}/resolutions:
+    post:
+      tags: [reviews]
+      operationId: createSyncReviewResolution
+      summary: Resolver o anotar una operación en revisión
+      description: |
+        Evento separado: la operación y la respuesta originales **nunca** se
+        modifican. `NOTE` se puede agregar muchas veces; `CONFIRMED` y
+        `DISMISSED` son finales (una segunda → `409 ALREADY_RESOLVED`).
+        `CORRECTED` queda para cuando se habilite la respuesta en nombre del
+        brigadista (fuera del MVP).
+
+        `id` lo genera el cliente (idempotencia, como en los avisos).
+      x-capabilities: [COORD]
+      x-client: [WEB]
+      x-idempotency: body.id
+      parameters:
+        - $ref: "#/components/parameters/OperationIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ResolutionCreateRequest" }
+      responses:
+        "201":
+          description: Resolución registrada
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncReview" }
+        "200":
+          description: Repetición; la resolución ya existía
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncReview" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  # ───────────────────────────── Administración ─────────────────────────────
+  /v1/users:
+    get:
+      tags: [admin]
+      operationId: listUsers
+      summary: Cuentas (RUT completo solo para el administrador)
+      x-capabilities: [ADMIN]
+      x-client: [WEB]
+      parameters:
+        - name: active
+          in: query
+          schema: { type: boolean }
+        - name: role
+          in: query
+          schema: { $ref: "#/components/schemas/AppRole" }
+        - name: q
+          in: query
+          description: Búsqueda por nombre o RUT (prefijo; el RUT se normaliza)
+          schema: { type: string, minLength: 1, maxLength: 60 }
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Página de cuentas, ordenadas por nombre
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      tags: [admin]
+      operationId: createUser
+      summary: Dar de alta una cuenta con contraseña provisoria
+      description: |
+        La contraseña provisoria se devuelve **una sola vez** en esta respuesta
+        (`Cache-Control: no-store`); no se guarda en claro ni se registra.
+        Vence a las 72 h.
+
+        Si se crea como brigadista mientras hay una convocatoria **activa**,
+        queda convocado automáticamente (`LATE_ADDITION`, autor = el
+        administrador) y se informa en `addedToActiveEmergency`.
+
+        RUT ya registrado → `409 RUT_ALREADY_EXISTS`; correo →
+        `409 EMAIL_ALREADY_EXISTS`.
+      x-capabilities: [ADMIN]
+      x-client: [WEB]
+      x-idempotency: natural
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserCreateRequest" }
+      responses:
+        "201":
+          description: Cuenta creada
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            Cache-Control: { $ref: "#/components/headers/CacheControlNoStore" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserCreatedResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/users/{userId}:
+    parameters:
+      - $ref: "#/components/parameters/UserIdPath"
+    get:
+      tags: [admin]
+      operationId: getUser
+      summary: Detalle de una cuenta con sus dispositivos
+      x-capabilities: [ADMIN]
+      x-client: [WEB]
+      responses:
+        "200":
+          description: Cuenta
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    patch:
+      tags: [admin]
+      operationId: updateUser
+      summary: Editar nombre o correo
+      description: El RUT no se edita (identidad de acceso).
+      x-capabilities: [ADMIN]
+      x-client: [WEB]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserUpdateRequest" }
+      responses:
+        "200":
+          description: Cuenta actualizada
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/users/{userId}/deactivate:
+    parameters:
+      - $ref: "#/components/parameters/UserIdPath"
+    post:
+      tags: [admin]
+      operationId: deactivateUser
+      summary: Desactivar una cuenta
+      description: |
+        Revoca todas sus sesiones y sube `credential_version`; sus operaciones
+        de sincronización nuevas salen `REJECTED ACCOUNT_INACTIVE`. Su fila de
+        convocado y su historial se conservan. No puede desactivarse a sí
+        mismo (`409 CANNOT_DEACTIVATE_SELF`) ni al último administrador activo
+        (`409 LAST_ADMIN`). Idempotente.
+      x-capabilities: [ADMIN]
+      x-client: [WEB]
+      x-idempotency: state
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: Cuenta desactivada
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/users/{userId}/activate:
+    parameters:
+      - $ref: "#/components/parameters/UserIdPath"
+    post:
+      tags: [admin]
+      operationId: activateUser
+      summary: Reactivar una cuenta
+      description: |
+        Si la cuenta tiene perfil de brigadista activo y hay una convocatoria
+        **activa** en la que no figura, queda convocada automáticamente
+        (`LATE_ADDITION`), se le encola el push del aviso `ACTIVATION` y se
+        informa en `addedToActiveEmergency`. Si **ya figuraba** (fue
+        desactivada durante la misma convocatoria), no se crea otro convocado
+        de más: si sigue sin responder, se re-arman (`QUEUED`, intentos en 0,
+        estado anterior a auditoría) sus entregas de los avisos que no ha
+        acusado, y se crean las que falten para dispositivos nuevos, siempre
+        una por aviso y dispositivo. Idempotente.
+      x-capabilities: [ADMIN]
+      x-client: [WEB]
+      x-idempotency: state
+      responses:
+        "200":
+          description: Cuenta activa
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserChangeResult" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/users/{userId}/reset-password:
+    parameters:
+      - $ref: "#/components/parameters/UserIdPath"
+    post:
+      tags: [admin]
+      operationId: resetUserPassword
+      summary: Restablecer la contraseña (nueva provisoria)
+      description: |
+        Única vía de recuperación en el MVP (D-B6). En una transacción: nueva
+        provisoria (72 h), `credential_version + 1` y revocación de todas las
+        sesiones. La provisoria se devuelve **una sola vez**.
+      x-capabilities: [ADMIN]
+      x-client: [WEB]
+      responses:
+        "200":
+          description: Contraseña provisoria nueva
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            Cache-Control: { $ref: "#/components/headers/CacheControlNoStore" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProvisionalPassword" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/users/{userId}/roles/{role}:
+    parameters:
+      - $ref: "#/components/parameters/UserIdPath"
+      - $ref: "#/components/parameters/RolePath"
+    put:
+      tags: [admin]
+      operationId: grantUserRole
+      summary: Otorgar un rol
+      description: Idempotente. No revoca sesiones; aplica en la petición siguiente.
+      x-capabilities: [ADMIN]
+      x-client: [WEB]
+      x-idempotency: state
+      responses:
+        "200":
+          description: Rol vigente
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    delete:
+      tags: [admin]
+      operationId: revokeUserRole
+      summary: Quitar un rol
+      description: |
+        Idempotente. Quitar el último `ADMINISTRADOR` activo →
+        `409 LAST_ADMIN`.
+      x-capabilities: [ADMIN]
+      x-client: [WEB]
+      x-idempotency: state
+      responses:
+        "200":
+          description: Rol quitado
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/users/{userId}/brigadista-profile:
+    parameters:
+      - $ref: "#/components/parameters/UserIdPath"
+    put:
+      tags: [admin]
+      operationId: upsertBrigadistaProfile
+      summary: Dar (o reactivar) la condición de brigadista y su teléfono
+      description: |
+        Crea el perfil, lo reactiva o actualiza el teléfono. Si queda activo,
+        la cuenta está activa y hay una convocatoria **activa** en la que no
+        figura, queda convocado automáticamente (`LATE_ADDITION`) con las
+        mismas reglas de no duplicación de `activateUser`. Solo actualizar el
+        teléfono nunca convoca ni notifica.
+      x-capabilities: [ADMIN]
+      x-client: [WEB]
+      x-idempotency: state
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BrigadistaProfileRequest" }
+      responses:
+        "200":
+          description: Perfil vigente
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserChangeResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/users/{userId}/brigadista-profile/deactivate:
+    parameters:
+      - $ref: "#/components/parameters/UserIdPath"
+    post:
+      tags: [admin]
+      operationId: deactivateBrigadistaProfile
+      summary: Quitar la condición de brigadista (la cuenta sigue activa)
+      description: |
+        Deja de ser convocado en convocatorias futuras. Una fila de convocado
+        existente se conserva. Idempotente.
+      x-capabilities: [ADMIN]
+      x-client: [WEB]
+      x-idempotency: state
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: Perfil inactivo
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/devices/{deviceId}/revoke:
+    post:
+      tags: [admin]
+      operationId: revokeDevice
+      summary: Revocar el dispositivo de cualquier usuario
+      x-capabilities: [ADMIN]
+      x-client: [WEB]
+      x-idempotency: state
+      parameters:
+        - $ref: "#/components/parameters/DeviceIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReasonRequest" }
+      responses:
+        "200":
+          description: Dispositivo revocado
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Device" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/audit-log:
+    get:
+      tags: [admin]
+      operationId: listAuditLog
+      summary: Auditoría (más reciente primero)
+      x-capabilities: [ADMIN]
+      x-client: [WEB]
+      parameters:
+        - name: actorId
+          in: query
+          schema: { $ref: "#/components/schemas/Uuid" }
+        - name: entityType
+          in: query
+          schema: { type: string, maxLength: 60 }
+        - name: entityId
+          in: query
+          schema: { $ref: "#/components/schemas/Uuid" }
+        - name: from
+          in: query
+          schema: { $ref: "#/components/schemas/Timestamp" }
+        - name: to
+          in: query
+          schema: { $ref: "#/components/schemas/Timestamp" }
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Página de auditoría
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditLogPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Token de acceso (JWT EdDSA, 10 min). Claims: `sub`, `sid`, `cv`,
+        `scope`, `exp`; **sin rol**. Móvil lo envía directo; la web, a través
+        del BFF (el navegador nunca lo ve).
+
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      description: Cursor opaco devuelto como `nextCursor` por la página anterior
+      schema: { type: string, minLength: 1, maxLength: 512 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    EmergencyIdPath:
+      name: emergencyId
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/Uuid" }
+    RecipientIdPath:
+      name: recipientId
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/Uuid" }
+    UserIdPath:
+      name: userId
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/Uuid" }
+    DeviceIdPath:
+      name: deviceId
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/Uuid" }
+    OperationIdPath:
+      name: operationId
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/Uuid" }
+    RolePath:
+      name: role
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/AppRole" }
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: '`ETag` leído antes de editar (por ejemplo `"1834"`).'
+      schema: { type: string, maxLength: 100 }
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      description: "`ETag` de la respuesta anterior; si no cambió, `304`."
+      schema: { type: string, maxLength: 200 }
+
+  headers:
+    XRequestId:
+      description: Identificador de la petición (también en los logs del servidor)
+      schema: { type: string, maxLength: 64 }
+    ETag:
+      description: |
+        Versión de la representación. Opaco para el cliente. En los endpoints
+        de polling combina la época de sincronización y las versiones máximas
+        de lo que se muestra.
+      schema: { type: string, maxLength: 200 }
+    RetryAfter:
+      description: Segundos que el cliente debe esperar antes de reintentar
+      schema: { type: integer, minimum: 1 }
+    CacheControlNoStore:
+      description: Respuesta con secretos de un solo uso; no se guarda en caché
+      schema: { type: string, const: no-store }
+    CacheControlNoCache:
+      description: Se puede guardar pero hay que revalidar con `If-None-Match`
+      schema: { type: string, const: no-cache }
+
+  responses:
+    BadRequest:
+      description: Entrada inválida (`VALIDATION_ERROR`, con `errors` por campo)
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Unauthorized:
+      description: Sin token, vencido, revocado o credenciales incorrectas
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Forbidden:
+      description: |
+        Autenticado sin permiso (`FORBIDDEN`), sesión restringida
+        (`PASSWORD_CHANGE_REQUIRED`), dispositivo revocado (`DEVICE_REVOKED`) o
+        ruta móvil desde otra sesión (`MOBILE_SESSION_REQUIRED`)
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotFound:
+      description: No existe o el usuario no puede saber que existe
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Conflict:
+      description: Regla de negocio (ver `code`)
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    PreconditionFailed:
+      description: "`If-Match` no coincide: otro usuario modificó el recurso"
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    PreconditionRequired:
+      description: Falta `If-Match`
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    PayloadTooLarge:
+      description: Lote demasiado grande; partirlo
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    UnprocessableEntity:
+      description: |
+        Entrada bien formada que no cumple una regla (`PASSWORD_POLICY`,
+        `PASSWORD_REUSED`, `CURRENT_PASSWORD_INVALID`)
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    TooManyRequests:
+      description: Límite de peticiones
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotModified:
+      description: Sin cambios desde el `ETag` indicado
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        ETag: { $ref: "#/components/headers/ETag" }
+    InternalError:
+      description: Error interno, sin detalle (el detalle queda en el log con `requestId`)
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    ServiceUnavailable:
+      description: Dependencia no disponible (por ejemplo, la base); reintentar
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    # ─────────────── Tipos básicos ───────────────
+    Uuid:
+      type: string
+      format: uuid
+    Timestamp:
+      type: string
+      format: date-time
+      description: UTC con milisegundos, por ejemplo `2026-11-13T12:00:05.120Z`
+    RowVersion:
+      type: integer
+      format: int64
+      minimum: 0
+      description: Versión de la secuencia global de sincronización
+    RutInput:
+      type: string
+      minLength: 1
+      maxLength: 20
+      description: |
+        RUT tal como lo escribe la persona (`12.345.678-5`, `12345678-5`,
+        `123456785`, `k` minúscula). El servidor lo normaliza y valida con
+        `packages/shared/rut`; inválido → `400 VALIDATION_ERROR` con el código
+        `RUT_INVALID_FORMAT` o `RUT_INVALID_VERIFIER` en `errors`.
+      examples: ["12.345.678-5"]
+    CanonicalRut:
+      type: string
+      pattern: "^[1-9][0-9]{0,7}-[0-9K]$"
+      description: RUT canónico, igual a la restricción de la base
+      examples: ["12345678-5"]
+    PersonName:
+      type: string
+      minLength: 1
+      maxLength: 120
+    Email:
+      type: string
+      format: email
+      maxLength: 254
+      description: Se guarda en minúsculas
+    Phone:
+      type: string
+      pattern: "^\\+?[0-9 ]{8,20}$"
+      description: Teléfono de contacto para llamadas del coordinador (por ejemplo `+56 9 1234 5678`)
+    Reason:
+      type: string
+      minLength: 1
+      maxLength: 300
+      description: Motivo; queda en auditoría. Sin datos sensibles.
+
+    HealthStatus:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, const: ok }
+
+    # ─────────────── Errores ───────────────
+    Problem:
+      type: object
+      description: RFC 9457. `code` es estable; `title` y `detail` no se muestran tal cual al usuario.
+      additionalProperties: false
+      required: [type, title, status, code, requestId]
+      properties:
+        type: { type: string, default: about:blank }
+        title: { type: string }
+        status: { type: integer, minimum: 400, maximum: 599 }
+        code: { $ref: "#/components/schemas/ErrorCode" }
+        detail: { type: string }
+        requestId: { type: string }
+        errors:
+          type: array
+          description: Solo con `VALIDATION_ERROR`
+          items: { $ref: "#/components/schemas/FieldError" }
+    FieldError:
+      type: object
+      additionalProperties: false
+      required: [field, code]
+      properties:
+        field:
+          type: string
+          description: Puntero JSON al campo (`/rut`, `/operations/3/deviceSeq`)
+        code:
+          type: string
+          description: Motivo estable (`required`, `format`, `maxLength`, `RUT_INVALID_VERIFIER`, …)
+        message: { type: string }
+    ErrorCode:
+      type: string
+      enum:
+        - VALIDATION_ERROR
+        - INVALID_CREDENTIALS
+        - UNAUTHENTICATED
+        - FORBIDDEN
+        - PASSWORD_CHANGE_REQUIRED
+        - MOBILE_SESSION_REQUIRED
+        - DEVICE_REVOKED
+        - DEVICE_ID_CONFLICT
+        - DEVICE_SEQ_CONFLICT
+        - REFRESH_RACE
+        - NOT_FOUND
+        - PRECONDITION_REQUIRED
+        - PRECONDITION_FAILED
+        - IDEMPOTENCY_KEY_REUSED
+        - EMERGENCY_ALREADY_ACTIVE
+        - EMERGENCY_NOT_DRAFT
+        - EMERGENCY_NOT_ACTIVE
+        - EMERGENCY_CLOSED
+        - BRIGADISTA_INACTIVE
+        - USER_INACTIVE
+        - RUT_ALREADY_EXISTS
+        - EMAIL_ALREADY_EXISTS
+        - LAST_ADMIN
+        - CANNOT_DEACTIVATE_SELF
+        - ALREADY_RESOLVED
+        - NOT_REVIEWABLE
+        - PASSWORD_POLICY
+        - PASSWORD_REUSED
+        - CURRENT_PASSWORD_INVALID
+        - PAYLOAD_TOO_LARGE
+        - RATE_LIMITED
+        - SERVICE_UNAVAILABLE
+        - INTERNAL_ERROR
+
+    # ─────────────── Autenticación ───────────────
+    ClientType:
+      type: string
+      enum: [MOBILE, WEB]
+    SessionScope:
+      type: string
+      enum: [FULL, PASSWORD_CHANGE_ONLY]
+      description: "`PASSWORD_CHANGE_ONLY`: solo `/v1/auth/password`, `/v1/auth/logout` y `/v1/me`"
+    AppRole:
+      type: string
+      enum: [ADMINISTRADOR, COORDINADOR]
+    Capability:
+      type: string
+      enum: [ADMIN, COORD, BRIG]
+    DevicePlatform:
+      type: string
+      enum: [ANDROID, IOS]
+
+    DeviceRegistration:
+      type: object
+      additionalProperties: false
+      required: [id, platform]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+          description: UUID v7 generado por la app al crear su base local; uno nuevo tras cerrar sesión o reinstalar
+        platform: { $ref: "#/components/schemas/DevicePlatform" }
+        appVersion: { type: string, maxLength: 32 }
+        osVersion: { type: string, maxLength: 32 }
+
+    LoginRequest:
+      oneOf:
+        - $ref: "#/components/schemas/MobileLoginRequest"
+        - $ref: "#/components/schemas/WebLoginRequest"
+      discriminator:
+        propertyName: clientType
+        mapping:
+          MOBILE: "#/components/schemas/MobileLoginRequest"
+          WEB: "#/components/schemas/WebLoginRequest"
+    MobileLoginRequest:
+      type: object
+      additionalProperties: false
+      required: [clientType, rut, password, device]
+      properties:
+        clientType: { type: string, const: MOBILE }
+        rut: { $ref: "#/components/schemas/RutInput" }
+        password: { type: string, minLength: 1, maxLength: 128, writeOnly: true }
+        device: { $ref: "#/components/schemas/DeviceRegistration" }
+    WebLoginRequest:
+      type: object
+      additionalProperties: false
+      required: [clientType, rut, password]
+      properties:
+        clientType: { type: string, const: WEB }
+        rut: { $ref: "#/components/schemas/RutInput" }
+        password: { type: string, minLength: 1, maxLength: 128, writeOnly: true }
+
+    AuthTokens:
+      type: object
+      additionalProperties: false
+      required: [accessToken, accessTokenExpiresAt, refreshToken, refreshTokenExpiresAt, sessionScope]
+      properties:
+        accessToken: { type: string }
+        accessTokenExpiresAt: { $ref: "#/components/schemas/Timestamp" }
+        refreshToken:
+          type: string
+          description: Opaco, de un solo uso. Móvil lo guarda en SecureStore; la web, en cookie `httpOnly` del BFF.
+        refreshTokenExpiresAt: { $ref: "#/components/schemas/Timestamp" }
+        sessionScope: { $ref: "#/components/schemas/SessionScope" }
+    LoginResponse:
+      type: object
+      additionalProperties: false
+      required: [tokens, me]
+      properties:
+        tokens: { $ref: "#/components/schemas/AuthTokens" }
+        me: { $ref: "#/components/schemas/Me" }
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string, minLength: 1, maxLength: 200 }
+    ChangePasswordRequest:
+      type: object
+      additionalProperties: false
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword: { type: string, minLength: 1, maxLength: 128, writeOnly: true }
+        newPassword: { type: string, minLength: 10, maxLength: 128, writeOnly: true }
+
+    Me:
+      type: object
+      additionalProperties: false
+      description: Sin RUT ni datos de terceros (el teléfono lo guarda).
+      required:
+        [id, fullName, email, roles, capabilities, mustChangePassword, passwordExpiresAt, session, brigadista, serverTime]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        fullName: { $ref: "#/components/schemas/PersonName" }
+        email:
+          oneOf:
+            - $ref: "#/components/schemas/Email"
+            - type: "null"
+        roles:
+          type: array
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/AppRole" }
+        capabilities:
+          type: array
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/Capability" }
+        mustChangePassword: { type: boolean }
+        passwordExpiresAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        session:
+          type: object
+          additionalProperties: false
+          required: [id, scope, clientType, deviceId]
+          properties:
+            id: { $ref: "#/components/schemas/Uuid" }
+            scope: { $ref: "#/components/schemas/SessionScope" }
+            clientType: { $ref: "#/components/schemas/ClientType" }
+            deviceId:
+              oneOf:
+                - $ref: "#/components/schemas/Uuid"
+                - type: "null"
+        brigadista:
+          oneOf:
+            - $ref: "#/components/schemas/BrigadistaSelf"
+            - type: "null"
+        serverTime: { $ref: "#/components/schemas/Timestamp" }
+    BrigadistaSelf:
+      type: object
+      additionalProperties: false
+      required: [id, active]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        active: { type: boolean }
+
+    PushStatus:
+      type: string
+      enum: [NONE, VALID, INVALID]
+      description: "`NONE`: sin token (permisos negados o sesión cerrada). `INVALID`: el proveedor lo rechazó."
+    Device:
+      type: object
+      additionalProperties: false
+      required: [id, platform, appVersion, osVersion, pushStatus, lastSeenAt, createdAt, revokedAt, current]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        platform: { $ref: "#/components/schemas/DevicePlatform" }
+        appVersion: { type: ["string", "null"] }
+        osVersion: { type: ["string", "null"] }
+        pushStatus: { $ref: "#/components/schemas/PushStatus" }
+        lastSeenAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        createdAt: { $ref: "#/components/schemas/Timestamp" }
+        revokedAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        current:
+          type: boolean
+          description: Es el dispositivo de la sesión que hace la petición
+    DeviceList:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Device" }
+
+    # ─────────────── Sincronización: envío ───────────────
+    SyncClock:
+      type: object
+      additionalProperties: false
+      description: |
+        Relojes del teléfono **al enviar el lote**. Con ellos el servidor
+        estima la hora real de cada operación sin confiar solo en el reloj de
+        pared del teléfono.
+      required: [deviceNow, monotonicMs, bootSessionId]
+      properties:
+        deviceNow:
+          $ref: "#/components/schemas/Timestamp"
+          description: Reloj de pared del teléfono (puede estar mal; se usa para medir el desfase)
+        monotonicMs:
+          type: ["integer", "null"]
+          minimum: 0
+          description: Milisegundos desde el arranque del teléfono (no retrocede ni cambia con la hora). `null` si la plataforma no lo expone.
+        bootSessionId:
+          type: ["string", "null"]
+          minLength: 1
+          maxLength: 64
+          description: Identificador del arranque actual; si cambia, el reloj monotónico no es comparable
+    SyncOperationBase:
+      type: object
+      required: [operationId, deviceSeq, type, declaredAt, declaredMonotonicMs, bootSessionId, createdOffline]
+      properties:
+        operationId:
+          $ref: "#/components/schemas/Uuid"
+          description: UUID v7 generado en el teléfono; es también el `id` de la fila que crea
+        deviceSeq:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Contador del dispositivo, asignado en la misma transacción SQLite que la operación. Ordena las operaciones de un mismo teléfono sin mirar relojes.
+        type: { $ref: "#/components/schemas/SyncOperationType" }
+        declaredAt:
+          $ref: "#/components/schemas/Timestamp"
+          description: Reloj de pared del teléfono cuando el usuario actuó. Se guarda tal cual; **no** decide el orden por sí solo.
+        declaredMonotonicMs:
+          type: ["integer", "null"]
+          minimum: 0
+        bootSessionId:
+          type: ["string", "null"]
+          minLength: 1
+          maxLength: 64
+        createdOffline:
+          type: boolean
+          description: La acción se registró sin conexión
+    SyncOperationType:
+      type: string
+      enum: [RESPOND_EMERGENCY, ACK_NOTICE, REGISTER_PUSH_TOKEN]
+      description: |
+        Tipos de v1. `DECLARE_AVAILABILITY` existe en el modelo pero está
+        fuera del MVP: si llega, sale `REJECTED UNSUPPORTED_OPERATION` y **se
+        guarda** en `sync_operation`. Un tipo que el modelo no conoce también
+        sale `UNSUPPORTED_OPERATION`, sin fila (garantía 6). El servidor se
+        despliega siempre antes que una app que emita un tipo nuevo.
+    SyncOperation:
+      oneOf:
+        - $ref: "#/components/schemas/RespondEmergencyOperation"
+        - $ref: "#/components/schemas/AckNoticeOperation"
+        - $ref: "#/components/schemas/RegisterPushTokenOperation"
+      discriminator:
+        propertyName: type
+        mapping:
+          RESPOND_EMERGENCY: "#/components/schemas/RespondEmergencyOperation"
+          ACK_NOTICE: "#/components/schemas/AckNoticeOperation"
+          REGISTER_PUSH_TOKEN: "#/components/schemas/RegisterPushTokenOperation"
+    RespondEmergencyOperation:
+      description: |
+        Respuesta `VOY` / `NO_PUEDO` del brigadista. Crea una fila en el
+        historial de respuestas (nunca se borra) y, si es `APPLIED`, pasa a ser
+        la respuesta vigente del convocado.
+      allOf:
+        - $ref: "#/components/schemas/SyncOperationBase"
+        - type: object
+          required: [type, baseRowVersion, payload]
+          properties:
+            type: { type: string, const: RESPOND_EMERGENCY }
+            baseRowVersion:
+              $ref: "#/components/schemas/RowVersion"
+              description: "`rowVersion` del convocado que veía el teléfono al responder (detección de conflicto)"
+            payload:
+              type: object
+              additionalProperties: false
+              required: [recipientId, response]
+              properties:
+                recipientId: { $ref: "#/components/schemas/Uuid" }
+                response: { $ref: "#/components/schemas/ResponseValue" }
+      unevaluatedProperties: false
+    AckNoticeOperation:
+      description: |
+        Acuse del teléfono: `RECEIVED` (con la vía) u `OPENED`. Acusar **no**
+        es responder. A lo sumo un acuse por aviso × convocado × dispositivo ×
+        nivel. Uno equivalente con otro `operationId` sale
+        `SUPERSEDED EQUIVALENT_ACK`: `entityId` es el id del acuse **existente**
+        (distinto del `operationId`), `rowVersion` es `null` (los acuses no se
+        replican) y el teléfono lo marca sincronizado **sin cambiar** su id
+        local. El aviso y el convocado deben ser de la misma convocatoria (si
+        no, `REJECTED NOT_A_RECIPIENT`).
+      allOf:
+        - $ref: "#/components/schemas/SyncOperationBase"
+        - type: object
+          required: [type, payload]
+          properties:
+            type: { type: string, const: ACK_NOTICE }
+            payload:
+              oneOf:
+                - $ref: "#/components/schemas/AckReceivedPayload"
+                - $ref: "#/components/schemas/AckOpenedPayload"
+      unevaluatedProperties: false
+    AckReceivedPayload:
+      type: object
+      additionalProperties: false
+      required: [noticeId, recipientId, level, via]
+      properties:
+        noticeId: { $ref: "#/components/schemas/Uuid" }
+        recipientId: { $ref: "#/components/schemas/Uuid" }
+        level: { type: string, const: RECEIVED }
+        via:
+          type: string
+          enum: [PUSH, SYNC]
+          description: "`PUSH`: lo recibió el manejador de notificaciones. `SYNC`: llegó por descarga (push perdido)."
+    AckOpenedPayload:
+      type: object
+      additionalProperties: false
+      required: [noticeId, recipientId, level]
+      properties:
+        noticeId: { $ref: "#/components/schemas/Uuid" }
+        recipientId: { $ref: "#/components/schemas/Uuid" }
+        level: { type: string, const: OPENED }
+    RegisterPushTokenOperation:
+      description: |
+        Registra, cambia o quita (`null`) el token push del dispositivo de la
+        sesión. Va por sincronización para que un cambio de token sin conexión
+        no se pierda. Cada dispositivo tiene su propio token y un usuario puede
+        tener varios. Si otro dispositivo (de este u otro usuario) tenía el
+        mismo token, se le quita: un teléfono físico suena para una sola
+        cuenta (en una transacción: primero se quita al anterior, después se
+        asigna). Un token nuevo vuelve a quedar `VALID`. Registrar un token
+        durante una convocatoria activa **no** crea entregas: ese teléfono está
+        en línea y descarga la convocatoria por sincronización. El token no se
+        guarda en el registro de operaciones, solo su hash.
+      allOf:
+        - $ref: "#/components/schemas/SyncOperationBase"
+        - type: object
+          required: [type, payload]
+          properties:
+            type: { type: string, const: REGISTER_PUSH_TOKEN }
+            payload:
+              type: object
+              additionalProperties: false
+              required: [token]
+              properties:
+                token:
+                  type: ["string", "null"]
+                  minLength: 1
+                  maxLength: 4096
+                  description: Token Expo Push (D-B3); `null` si se negaron los permisos
+      unevaluatedProperties: false
+    SyncPushRequest:
+      type: object
+      additionalProperties: false
+      required: [clock, operations]
+      properties:
+        clock: { $ref: "#/components/schemas/SyncClock" }
+        operations:
+          type: array
+          minItems: 1
+          maxItems: 50
+          description: Ordenadas por `deviceSeq` ascendente
+          items: { $ref: "#/components/schemas/SyncOperation" }
+    SyncResult:
+      type: string
+      enum: [APPLIED, SUPERSEDED, CONFLICT, REJECTED]
+      description: |
+        | Resultado | Significado | Teléfono |
+        |---|---|---|
+        | `APPLIED` | Aplicada; es el dato vigente | Marcar sincronizada; borrar de la cola |
+        | `SUPERSEDED` | Guardada en el historial; otra más nueva manda | Igual; descargar el vigente |
+        | `CONFLICT` | Guardada; orden ambiguo o cierre; el coordinador revisa | Igual; descargar el vigente |
+        | `REJECTED` | No se aplicó (ver `code`) | Mostrar el motivo; **no** reintentar |
+    SyncResultCode:
+      type: string
+      enum:
+        - EQUIVALENT_ACK
+        - AMBIGUOUS_ORDER
+        - LATE_AFTER_CLOSE
+        - EMERGENCY_CLOSED
+        - NOT_A_RECIPIENT
+        - ACCOUNT_INACTIVE
+        - INVALID_PAYLOAD
+        - UNSUPPORTED_OPERATION
+      description: |
+        `SUPERSEDED`: sin código, o `EQUIVALENT_ACK` (ya existía un acuse
+        equivalente; el teléfono no necesita mostrarlo).
+        `CONFLICT`: `AMBIGUOUS_ORDER` (dos acciones a ≤ 60 s de distintas
+        fuentes), `LATE_AFTER_CLOSE` (respuesta a ≤ 60 s del cierre o sin hora
+        confiable recibida después del cierre).
+        `REJECTED`: `EMERGENCY_CLOSED` (respondió después del cierre),
+        `NOT_A_RECIPIENT`, `ACCOUNT_INACTIVE`, `INVALID_PAYLOAD`,
+        `UNSUPPORTED_OPERATION`. Una colisión de `deviceSeq` **no** es un
+        resultado por operación: es `409 DEVICE_SEQ_CONFLICT` del lote.
+    SyncOperationResult:
+      type: object
+      additionalProperties: false
+      required: [operationId, result, code, duplicate, entityId, rowVersion, lateSyncAfterClose]
+      properties:
+        operationId: { $ref: "#/components/schemas/Uuid" }
+        result: { $ref: "#/components/schemas/SyncResult" }
+        code:
+          oneOf:
+            - $ref: "#/components/schemas/SyncResultCode"
+            - type: "null"
+        duplicate:
+          type: boolean
+          description: "`true` si el `operationId` ya se había procesado; el resultado es el guardado"
+        entityId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+          description: |
+            Fila creada o afectada (respuesta, acuse); `null` si fue rechazada.
+            Normalmente igual a `operationId`; con `EQUIVALENT_ACK` es el acuse
+            existente.
+        rowVersion:
+          oneOf:
+            - $ref: "#/components/schemas/RowVersion"
+            - type: "null"
+          description: Versión del dato vigente afectado (por ejemplo el convocado), si cambió; `null` para acuses y tokens
+        lateSyncAfterClose:
+          type: boolean
+          description: Respuesta tomada antes del cierre que llegó después
+    SyncPushResponse:
+      type: object
+      additionalProperties: false
+      required: [syncEpoch, serverTime, results]
+      properties:
+        syncEpoch: { $ref: "#/components/schemas/Uuid" }
+        serverTime: { $ref: "#/components/schemas/Timestamp" }
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/SyncOperationResult" }
+
+    # ─────────────── Sincronización: descarga ───────────────
+    SyncCursors:
+      type: object
+      description: |
+        Último `rowVersion` aplicado por ámbito (0 si nunca). Ámbitos
+        desconocidos se ignoran, para que agregar ámbitos sea compatible.
+      required: [profile, emergencies, notices, recipients, responses]
+      properties:
+        profile: { $ref: "#/components/schemas/RowVersion" }
+        emergencies: { $ref: "#/components/schemas/RowVersion" }
+        notices: { $ref: "#/components/schemas/RowVersion" }
+        recipients: { $ref: "#/components/schemas/RowVersion" }
+        responses: { $ref: "#/components/schemas/RowVersion" }
+      additionalProperties: { $ref: "#/components/schemas/RowVersion" }
+    SyncPullRequest:
+      type: object
+      additionalProperties: false
+      required: [syncEpoch, cursors]
+      properties:
+        syncEpoch:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+          description: Época guardada en el teléfono; `null` en la primera descarga
+        cursors: { $ref: "#/components/schemas/SyncCursors" }
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 200
+          description: Máximo de filas por ámbito
+    SyncPullResponse:
+      type: object
+      additionalProperties: false
+      description: |
+        La app debe ignorar campos y ámbitos que no conozca (compatibilidad
+        hacia adelante).
+      required: [syncEpoch, epochChanged, serverTime, scopes, lateAdditions]
+      properties:
+        syncEpoch: { $ref: "#/components/schemas/Uuid" }
+        epochChanged:
+          type: boolean
+          description: "`true`: descartar cursores, aplicar todo y reenviar las operaciones propias de los últimos 7 días"
+        serverTime: { $ref: "#/components/schemas/Timestamp" }
+        scopes:
+          type: object
+          additionalProperties: false
+          required: [profile, emergencies, notices, recipients, responses]
+          properties:
+            profile: { $ref: "#/components/schemas/ProfileScope" }
+            emergencies: { $ref: "#/components/schemas/EmergencyScope" }
+            notices: { $ref: "#/components/schemas/NoticeScope" }
+            recipients: { $ref: "#/components/schemas/RecipientScope" }
+            responses: { $ref: "#/components/schemas/ResponseScope" }
+        lateAdditions:
+          type: array
+          items: { $ref: "#/components/schemas/LateAddition" }
+    ProfileScope:
+      type: object
+      additionalProperties: false
+      description: |
+        El perfil viaja como **una** instantánea completa (cuenta + perfil de
+        brigadista) cuando cambió cualquiera de los dos. El `cursor` es el
+        máximo de las dos versiones (= `snapshot.rowVersion`); con
+        `snapshot: null` (sin cambios), el `cursor` es **el recibido**.
+      required: [snapshot, cursor, hasMore]
+      properties:
+        snapshot:
+          oneOf:
+            - $ref: "#/components/schemas/ProfileSnapshot"
+            - type: "null"
+        cursor: { $ref: "#/components/schemas/RowVersion" }
+        hasMore: { type: boolean, const: false }
+    ProfileSnapshot:
+      type: object
+      additionalProperties: false
+      description: |
+        Solo campos replicables. El estado de la contraseña **no** viaja aquí:
+        lo dicen el login, `/v1/me` y el alcance de la sesión. Todo campo que se
+        agregue debe cambiar la versión de su fila (regla de H9).
+      required: [userId, fullName, active, roles, brigadista, rowVersion]
+      properties:
+        userId: { $ref: "#/components/schemas/Uuid" }
+        fullName: { $ref: "#/components/schemas/PersonName" }
+        active: { type: boolean }
+        roles:
+          type: array
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/AppRole" }
+        brigadista:
+          oneOf:
+            - $ref: "#/components/schemas/BrigadistaSelf"
+            - type: "null"
+        rowVersion:
+          $ref: "#/components/schemas/RowVersion"
+          description: Máximo de las versiones de la cuenta y del perfil de brigadista; no es la versión de una fila concreta. El teléfono guarda la instantánea solo si es mayor que la local.
+    EmergencyScope:
+      type: object
+      additionalProperties: false
+      required: [rows, cursor, hasMore]
+      properties:
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/SyncEmergency" }
+        cursor: { $ref: "#/components/schemas/RowVersion" }
+        hasMore: { type: boolean }
+    NoticeScope:
+      type: object
+      additionalProperties: false
+      required: [rows, cursor, hasMore]
+      properties:
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/SyncNotice" }
+        cursor: { $ref: "#/components/schemas/RowVersion" }
+        hasMore: { type: boolean }
+    RecipientScope:
+      type: object
+      additionalProperties: false
+      required: [rows, cursor, hasMore]
+      properties:
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/SyncRecipient" }
+        cursor: { $ref: "#/components/schemas/RowVersion" }
+        hasMore: { type: boolean }
+    ResponseScope:
+      type: object
+      additionalProperties: false
+      required: [rows, cursor, hasMore]
+      properties:
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/SyncResponse" }
+        cursor: { $ref: "#/components/schemas/RowVersion" }
+        hasMore: { type: boolean }
+    LateAddition:
+      type: object
+      additionalProperties: false
+      required: [emergency, notices]
+      properties:
+        emergency: { $ref: "#/components/schemas/SyncEmergency" }
+        notices:
+          type: array
+          items: { $ref: "#/components/schemas/SyncNotice" }
+
+    SyncEmergency:
+      type: object
+      additionalProperties: false
+      description: Convocatoria vista por un convocado. Los borradores nunca se replican.
+      required:
+        [id, emergencyType, meetingPoint, scheduledAt, instructions, status, activatedAt, closedAt, rowVersion]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        emergencyType: { $ref: "#/components/schemas/EmergencyType" }
+        meetingPoint: { $ref: "#/components/schemas/MeetingPoint" }
+        scheduledAt: { $ref: "#/components/schemas/Timestamp" }
+        instructions:
+          oneOf:
+            - $ref: "#/components/schemas/Instructions"
+            - type: "null"
+        status:
+          type: string
+          enum: [ACTIVE, CLOSED]
+        activatedAt: { $ref: "#/components/schemas/Timestamp" }
+        closedAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        rowVersion: { $ref: "#/components/schemas/RowVersion" }
+    SyncNotice:
+      type: object
+      additionalProperties: false
+      required: [id, emergencyId, kind, message, createdAt, rowVersion]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        emergencyId: { $ref: "#/components/schemas/Uuid" }
+        kind: { $ref: "#/components/schemas/NoticeKind" }
+        message: { type: ["string", "null"] }
+        createdAt: { $ref: "#/components/schemas/Timestamp" }
+        rowVersion: { $ref: "#/components/schemas/RowVersion" }
+    SyncRecipient:
+      type: object
+      additionalProperties: false
+      description: Mi fila de convocado, con la respuesta **vigente** decidida por el servidor.
+      required: [id, emergencyId, addedReason, convokedAt, currentResponse, currentResponseId, respondedAt, rowVersion]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        emergencyId: { $ref: "#/components/schemas/Uuid" }
+        addedReason: { $ref: "#/components/schemas/RecipientReason" }
+        convokedAt: { $ref: "#/components/schemas/Timestamp" }
+        currentResponse:
+          oneOf:
+            - $ref: "#/components/schemas/ResponseValue"
+            - type: "null"
+        currentResponseId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+        respondedAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+          description: Hora estimada por el servidor de la respuesta vigente
+        rowVersion: { $ref: "#/components/schemas/RowVersion" }
+    SyncResponse:
+      type: object
+      additionalProperties: false
+      description: Una respuesta de mi historial (de cualquiera de mis dispositivos).
+      required:
+        [id, recipientId, response, source, declaredAt, estimatedAt, timeConfidence, receivedAt, deviceId, syncResult, lateSyncAfterClose, rowVersion]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        recipientId: { $ref: "#/components/schemas/Uuid" }
+        response: { $ref: "#/components/schemas/ResponseValue" }
+        source: { $ref: "#/components/schemas/ActionSource" }
+        declaredAt: { $ref: "#/components/schemas/Timestamp" }
+        estimatedAt: { $ref: "#/components/schemas/Timestamp" }
+        timeConfidence: { $ref: "#/components/schemas/TimeConfidence" }
+        receivedAt: { $ref: "#/components/schemas/Timestamp" }
+        deviceId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+        syncResult:
+          type: string
+          enum: [APPLIED, SUPERSEDED, CONFLICT]
+        lateSyncAfterClose: { type: boolean }
+        rowVersion: { $ref: "#/components/schemas/RowVersion" }
+    MyActiveEmergency:
+      type: object
+      additionalProperties: false
+      required: [emergency, notices, recipient]
+      properties:
+        emergency: { $ref: "#/components/schemas/SyncEmergency" }
+        notices:
+          type: array
+          items: { $ref: "#/components/schemas/SyncNotice" }
+        recipient: { $ref: "#/components/schemas/SyncRecipient" }
+
+    # ─────────────── Dominio común ───────────────
+    EmergencyStatus:
+      type: string
+      enum: [DRAFT, ACTIVE, CLOSED]
+    NoticeKind:
+      type: string
+      enum: [ACTIVATION, UPDATE, CLOSURE, REOPEN]
+      description: "`REOPEN` existe en el modelo; en v1 no se emite (reapertura fuera del MVP). La app debe tolerar valores que no conozca."
+    ResponseValue:
+      type: string
+      enum: [VOY, NO_PUEDO]
+    ActionSource:
+      type: string
+      enum: [APP, WEB, COORDINATOR_PROXY]
+      description: "En v1 solo se emite `APP`; los otros existen en el modelo."
+    ContactChannel:
+      type: string
+      enum: [APP, PHONE_CALL, RADIO, IN_PERSON, OTHER]
+    RecipientReason:
+      type: string
+      enum: [ACTIVATION, LATE_ADDITION]
+    TimeConfidence:
+      type: string
+      enum: [MONOTONIC, CLOCK_OFFSET, SERVER_RECEIPT, HUMAN_DECLARED]
+      description: Con qué fuente estimó el servidor la hora real
+    EmergencyType:
+      type: string
+      minLength: 1
+      maxLength: 100
+      description: Texto libre en v1 (por ejemplo "Incendio forestal"); un catálogo queda para después
+    MeetingPoint:
+      type: string
+      minLength: 1
+      maxLength: 300
+    Instructions:
+      type: string
+      minLength: 1
+      maxLength: 2000
+    UserRef:
+      type: object
+      additionalProperties: false
+      required: [id, fullName]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        fullName: { $ref: "#/components/schemas/PersonName" }
+    PageInfo:
+      type: object
+      description: Base abierta de las páginas (cada página la cierra con `unevaluatedProperties`).
+      required: [nextCursor]
+      properties:
+        nextCursor:
+          type: ["string", "null"]
+          description: "`null` en la última página"
+
+    # ─────────────── Dashboard ───────────────
+    ReadinessState:
+      type: string
+      enum: [READY, NO_DEVICE, PUSH_INVALID, PUSH_DISABLED, NOT_SYNCED_RECENTLY]
+      description: |
+        Informativo, **nunca** filtra convocados.
+        `READY`: algún dispositivo no revocado con token válido y sincronizado
+        dentro del umbral. `NO_DEVICE`: ningún dispositivo no revocado.
+        `PUSH_INVALID`: tokens rechazados por el proveedor.
+        `PUSH_DISABLED`: dispositivos sin token (permisos negados o sesión
+        cerrada). `NOT_SYNCED_RECENTLY`: sin sincronizar dentro del umbral
+        (variable de entorno, propuesta 72 h).
+    BrigadistaReadiness:
+      type: object
+      additionalProperties: false
+      required: [state, activeDevices, validPushDevices, lastSeenAt]
+      properties:
+        state: { $ref: "#/components/schemas/ReadinessState" }
+        activeDevices: { type: integer, minimum: 0 }
+        validPushDevices: { type: integer, minimum: 0 }
+        lastSeenAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+    BrigadistaSummary:
+      type: object
+      additionalProperties: false
+      description: Vista del coordinador. Sin RUT.
+      required: [id, userId, fullName, phone, active, accountActive, readiness]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+          description: Id del perfil de brigadista
+        userId: { $ref: "#/components/schemas/Uuid" }
+        fullName: { $ref: "#/components/schemas/PersonName" }
+        phone:
+          oneOf:
+            - $ref: "#/components/schemas/Phone"
+            - type: "null"
+        active: { type: boolean }
+        accountActive: { type: boolean }
+        readiness: { $ref: "#/components/schemas/BrigadistaReadiness" }
+    BrigadistaPage:
+      allOf:
+        - $ref: "#/components/schemas/PageInfo"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/BrigadistaSummary" }
+      unevaluatedProperties: false
+    DashboardSummary:
+      type: object
+      additionalProperties: false
+      required: [generatedAt, brigadistas, activeEmergency, pendingReviews]
+      properties:
+        generatedAt: { $ref: "#/components/schemas/Timestamp" }
+        brigadistas:
+          type: object
+          additionalProperties: false
+          description: Conteo de brigadistas activos por estado de preparación
+          required: [active, ready, noDevice, pushInvalid, pushDisabled, notSyncedRecently]
+          properties:
+            active: { type: integer, minimum: 0 }
+            ready: { type: integer, minimum: 0 }
+            noDevice: { type: integer, minimum: 0 }
+            pushInvalid: { type: integer, minimum: 0 }
+            pushDisabled: { type: integer, minimum: 0 }
+            notSyncedRecently: { type: integer, minimum: 0 }
+        activeEmergency:
+          oneOf:
+            - $ref: "#/components/schemas/EmergencyHeader"
+            - type: "null"
+        pendingReviews: { type: integer, minimum: 0 }
+
+    # ─────────────── Convocatorias (coordinador) ───────────────
+    EmergencyHeader:
+      allOf:
+        - $ref: "#/components/schemas/EmergencyHeaderFields"
+      unevaluatedProperties: false
+    EmergencyHeaderFields:
+      type: object
+      description: Base abierta para componer con `allOf`; usar `EmergencyHeader` o `Emergency`.
+      required: [id, emergencyType, meetingPoint, scheduledAt, status, activatedAt, closedAt]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        emergencyType: { $ref: "#/components/schemas/EmergencyType" }
+        meetingPoint: { $ref: "#/components/schemas/MeetingPoint" }
+        scheduledAt: { $ref: "#/components/schemas/Timestamp" }
+        status: { $ref: "#/components/schemas/EmergencyStatus" }
+        activatedAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        closedAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+    Emergency:
+      allOf:
+        - $ref: "#/components/schemas/EmergencyHeaderFields"
+        - type: object
+          required: [instructions, createdBy, createdAt, activatedBy, closedBy, updatedAt, rowVersion]
+          properties:
+            instructions:
+              oneOf:
+                - $ref: "#/components/schemas/Instructions"
+                - type: "null"
+            createdBy: { $ref: "#/components/schemas/UserRef" }
+            createdAt: { $ref: "#/components/schemas/Timestamp" }
+            activatedBy:
+              oneOf:
+                - $ref: "#/components/schemas/UserRef"
+                - type: "null"
+            closedBy:
+              oneOf:
+                - $ref: "#/components/schemas/UserRef"
+                - type: "null"
+            updatedAt: { $ref: "#/components/schemas/Timestamp" }
+            rowVersion: { $ref: "#/components/schemas/RowVersion" }
+      unevaluatedProperties: false
+    Notice:
+      type: object
+      additionalProperties: false
+      required: [id, kind, message, createdAt, createdBy]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        kind: { $ref: "#/components/schemas/NoticeKind" }
+        message: { type: ["string", "null"] }
+        createdAt: { $ref: "#/components/schemas/Timestamp" }
+        createdBy: { $ref: "#/components/schemas/UserRef" }
+    EmergencyDetail:
+      type: object
+      additionalProperties: false
+      required: [emergency, notices]
+      properties:
+        emergency: { $ref: "#/components/schemas/Emergency" }
+        notices:
+          type: array
+          description: En orden cronológico
+          items: { $ref: "#/components/schemas/Notice" }
+    EmergencyPage:
+      allOf:
+        - $ref: "#/components/schemas/PageInfo"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/Emergency" }
+      unevaluatedProperties: false
+    EmergencyCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [id, emergencyType, meetingPoint, scheduledAt]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+          description: UUID v7 generado por el cliente (idempotencia)
+        emergencyType: { $ref: "#/components/schemas/EmergencyType" }
+        meetingPoint: { $ref: "#/components/schemas/MeetingPoint" }
+        scheduledAt:
+          $ref: "#/components/schemas/Timestamp"
+          description: Hora de presentación en el punto de encuentro
+        instructions: { $ref: "#/components/schemas/Instructions" }
+    EmergencyDraftUpdate:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        emergencyType: { $ref: "#/components/schemas/EmergencyType" }
+        meetingPoint: { $ref: "#/components/schemas/MeetingPoint" }
+        scheduledAt: { $ref: "#/components/schemas/Timestamp" }
+        instructions:
+          oneOf:
+            - $ref: "#/components/schemas/Instructions"
+            - type: "null"
+    NoticeCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [id, message]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+          description: UUID v7 generado por el cliente (idempotencia); es el id del aviso
+        message:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: Texto que reciben los convocados
+        changes:
+          type: object
+          additionalProperties: false
+          minProperties: 1
+          description: Cambios opcionales a la convocatoria, aplicados en la misma transacción que el aviso
+          properties:
+            emergencyType: { $ref: "#/components/schemas/EmergencyType" }
+            meetingPoint: { $ref: "#/components/schemas/MeetingPoint" }
+            scheduledAt: { $ref: "#/components/schemas/Timestamp" }
+            instructions:
+              oneOf:
+                - $ref: "#/components/schemas/Instructions"
+                - type: "null"
+    EmergencyCloseRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: Texto del aviso de cierre (opcional)
+    ActivationResult:
+      type: object
+      additionalProperties: false
+      required: [emergency, notices, recipientsCount, recipientsWithoutPush, alreadyActive]
+      properties:
+        emergency: { $ref: "#/components/schemas/Emergency" }
+        notices:
+          type: array
+          items: { $ref: "#/components/schemas/Notice" }
+        recipientsCount:
+          type: integer
+          minimum: 0
+          description: Convocados (todos los brigadistas activos)
+        recipientsWithoutPush:
+          type: integer
+          minimum: 0
+          description: Convocados sin ningún dispositivo con token válido (recibirán solo por sincronización o contacto manual)
+        alreadyActive:
+          type: boolean
+          description: "`true` si la convocatoria ya estaba activa (repetición)"
+
+    ReachStatus:
+      type: string
+      enum: [OPENED, RECEIVED, PROVIDER_ACCEPTED, SENDING, DELIVERY_FAILED, NO_DEVICE]
+      description: |
+        Llegada de **un aviso** a un convocado, derivada (no guardada), de mayor
+        a menor certeza:
+
+        | Valor | Condición |
+        |---|---|
+        | `OPENED` | Acuse `OPENED` en algún dispositivo |
+        | `RECEIVED` | Acuse `RECEIVED` (por push o por sincronización), sin `OPENED` |
+        | `PROVIDER_ACCEPTED` | El proveedor aceptó o entregó el push; **sin** acuse del teléfono |
+        | `SENDING` | Entregas en cola o enviadas, sin respuesta del proveedor |
+        | `DELIVERY_FAILED` | Todas las entregas fallaron o el token es inválido, sin acuse |
+        | `NO_DEVICE` | Sin dispositivos con token válido y sin acuse |
+
+        Un acuse siempre gana: un brigadista sin token que sincronizó aparece
+        `RECEIVED`.
+    NoticeReach:
+      type: object
+      additionalProperties: false
+      required: [noticeId, kind, reach]
+      properties:
+        noticeId: { $ref: "#/components/schemas/Uuid" }
+        kind: { $ref: "#/components/schemas/NoticeKind" }
+        reach: { $ref: "#/components/schemas/ReachStatus" }
+    ResponseStatus:
+      type: string
+      enum: [VOY, NO_PUEDO, PENDING]
+      description: "`PENDING` = convocado sin respuesta vigente"
+    RecipientStatus:
+      type: object
+      additionalProperties: false
+      required:
+        [recipientId, brigadista, addedReason, convokedAt, response, respondedAt, lateSyncAfterClose, reach, notices, hasPendingReview, lastSeenAt]
+      properties:
+        recipientId: { $ref: "#/components/schemas/Uuid" }
+        brigadista:
+          type: object
+          additionalProperties: false
+          required: [id, fullName, phone, active]
+          properties:
+            id: { $ref: "#/components/schemas/Uuid" }
+            fullName: { $ref: "#/components/schemas/PersonName" }
+            phone:
+              oneOf:
+                - $ref: "#/components/schemas/Phone"
+                - type: "null"
+            active: { type: boolean }
+        addedReason: { $ref: "#/components/schemas/RecipientReason" }
+        convokedAt: { $ref: "#/components/schemas/Timestamp" }
+        response: { $ref: "#/components/schemas/ResponseStatus" }
+        respondedAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        lateSyncAfterClose:
+          type: boolean
+          description: La respuesta vigente llegó después del cierre (tomada antes)
+        reach:
+          $ref: "#/components/schemas/ReachStatus"
+          description: Llegada del aviso `ACTIVATION`
+        notices:
+          type: array
+          description: Llegada de cada aviso, en orden cronológico
+          items: { $ref: "#/components/schemas/NoticeReach" }
+        hasPendingReview:
+          type: boolean
+          description: Tiene operaciones en conflicto o rechazadas sin resolver
+        lastSeenAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+          description: Última sincronización de cualquiera de sus dispositivos
+    RecipientList:
+      type: object
+      additionalProperties: false
+      required: [emergency, generatedAt, items]
+      properties:
+        emergency: { $ref: "#/components/schemas/EmergencyHeader" }
+        generatedAt: { $ref: "#/components/schemas/Timestamp" }
+        items:
+          type: array
+          description: Ordenados por nombre
+          items: { $ref: "#/components/schemas/RecipientStatus" }
+    ResponseCounts:
+      type: object
+      additionalProperties: false
+      required: [total, voy, noPuedo, pending]
+      properties:
+        total: { type: integer, minimum: 0 }
+        voy: { type: integer, minimum: 0 }
+        noPuedo: { type: integer, minimum: 0 }
+        pending: { type: integer, minimum: 0 }
+    ReachCounts:
+      type: object
+      additionalProperties: false
+      description: Conteo por estado de llegada del aviso `ACTIVATION`
+      required: [opened, received, providerAccepted, sending, deliveryFailed, noDevice]
+      properties:
+        opened: { type: integer, minimum: 0 }
+        received: { type: integer, minimum: 0 }
+        providerAccepted: { type: integer, minimum: 0 }
+        sending: { type: integer, minimum: 0 }
+        deliveryFailed: { type: integer, minimum: 0 }
+        noDevice: { type: integer, minimum: 0 }
+    ActiveEmergencySummary:
+      type: object
+      additionalProperties: false
+      required: [generatedAt, emergency, responses, reach, pendingWithoutAck, pendingReviews]
+      properties:
+        generatedAt: { $ref: "#/components/schemas/Timestamp" }
+        emergency:
+          oneOf:
+            - $ref: "#/components/schemas/EmergencyHeader"
+            - type: "null"
+        responses:
+          oneOf:
+            - $ref: "#/components/schemas/ResponseCounts"
+            - type: "null"
+        reach:
+          oneOf:
+            - $ref: "#/components/schemas/ReachCounts"
+            - type: "null"
+        pendingWithoutAck:
+          type: ["integer", "null"]
+          minimum: 0
+          description: Convocados sin respuesta **y** sin acuse (a quién llamar primero)
+        pendingReviews:
+          type: integer
+          minimum: 0
+    LateRecipientRequest:
+      type: object
+      additionalProperties: false
+      required: [brigadistaId, reason]
+      properties:
+        brigadistaId:
+          $ref: "#/components/schemas/Uuid"
+          description: Id del perfil de brigadista
+        reason: { $ref: "#/components/schemas/Reason" }
+    RecipientHistory:
+      type: object
+      additionalProperties: false
+      required: [recipient, responses, acks, deliveries]
+      properties:
+        recipient: { $ref: "#/components/schemas/RecipientStatus" }
+        responses:
+          type: array
+          items: { $ref: "#/components/schemas/ResponseHistoryEntry" }
+        acks:
+          type: array
+          items: { $ref: "#/components/schemas/AckHistoryEntry" }
+        deliveries:
+          type: array
+          items: { $ref: "#/components/schemas/DeliveryHistoryEntry" }
+    ResponseHistoryEntry:
+      type: object
+      additionalProperties: false
+      required:
+        [id, response, source, channel, declaredAt, estimatedAt, timeConfidence, receivedAt, createdOffline, syncResult, lateSyncAfterClose, current]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        response: { $ref: "#/components/schemas/ResponseValue" }
+        source: { $ref: "#/components/schemas/ActionSource" }
+        channel: { $ref: "#/components/schemas/ContactChannel" }
+        declaredAt:
+          $ref: "#/components/schemas/Timestamp"
+          description: Hora que dijo el teléfono
+        estimatedAt:
+          $ref: "#/components/schemas/Timestamp"
+          description: Hora que usa el servidor para ordenar
+        timeConfidence: { $ref: "#/components/schemas/TimeConfidence" }
+        receivedAt: { $ref: "#/components/schemas/Timestamp" }
+        createdOffline: { type: boolean }
+        syncResult:
+          type: string
+          enum: [APPLIED, SUPERSEDED, CONFLICT]
+        lateSyncAfterClose: { type: boolean }
+        current:
+          type: boolean
+          description: Es la respuesta vigente
+    AckHistoryEntry:
+      type: object
+      additionalProperties: false
+      required: [noticeId, deviceId, level, via, ackedAtDevice, receivedAt]
+      properties:
+        noticeId: { $ref: "#/components/schemas/Uuid" }
+        deviceId: { $ref: "#/components/schemas/Uuid" }
+        level:
+          type: string
+          enum: [RECEIVED, OPENED]
+        via:
+          type: ["string", "null"]
+          enum: [PUSH, SYNC, null]
+        ackedAtDevice: { $ref: "#/components/schemas/Timestamp" }
+        receivedAt: { $ref: "#/components/schemas/Timestamp" }
+    DeliveryHistoryEntry:
+      type: object
+      additionalProperties: false
+      description: Hechos del proveedor push; nunca significan "recibido por el teléfono".
+      required: [noticeId, deviceId, status, attempts, queuedAt, sentAt, providerAcceptedAt, providerDeliveredAt, failedAt, lastErrorCode]
+      properties:
+        noticeId: { $ref: "#/components/schemas/Uuid" }
+        deviceId: { $ref: "#/components/schemas/Uuid" }
+        status:
+          type: string
+          enum: [QUEUED, SENT, PROVIDER_ACCEPTED, PROVIDER_DELIVERED, FAILED]
+        attempts: { type: integer, minimum: 0 }
+        queuedAt: { $ref: "#/components/schemas/Timestamp" }
+        sentAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        providerAcceptedAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        providerDeliveredAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        failedAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        lastErrorCode: { type: ["string", "null"] }
+
+    # ─────────────── Revisiones ───────────────
+    ResolutionAction:
+      type: string
+      enum: [NOTE, CONFIRMED, DISMISSED]
+      description: "`CORRECTED` existe en el modelo; queda fuera de v1 (requiere la respuesta en nombre del brigadista)."
+    ResolutionCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [id, action]
+      properties:
+        id:
+          $ref: "#/components/schemas/Uuid"
+          description: UUID v7 generado por el cliente (idempotencia)
+        action: { $ref: "#/components/schemas/ResolutionAction" }
+        note:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: Obligatoria con `NOTE`
+      if:
+        properties:
+          action: { const: NOTE }
+      then:
+        required: [note]
+    Resolution:
+      type: object
+      additionalProperties: false
+      required: [id, action, note, resolvedBy, resolvedAt]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        action:
+          type: string
+          enum: [NOTE, CONFIRMED, DISMISSED, CORRECTED]
+        note: { type: ["string", "null"] }
+        resolvedBy: { $ref: "#/components/schemas/UserRef" }
+        resolvedAt: { $ref: "#/components/schemas/Timestamp" }
+    SyncReview:
+      type: object
+      additionalProperties: false
+      required:
+        [operationId, operationType, result, code, receivedAt, user, deviceId, emergencyId, recipientId, response, declaredAt, estimatedAt, timeConfidence, lateSyncAfterClose, currentResponse, status, resolutions]
+      properties:
+        operationId: { $ref: "#/components/schemas/Uuid" }
+        operationType:
+          type: string
+          description: Tipo de operación tal como se guardó
+        result:
+          type: string
+          enum: [CONFLICT, REJECTED]
+        code: { $ref: "#/components/schemas/SyncResultCode" }
+        receivedAt: { $ref: "#/components/schemas/Timestamp" }
+        user: { $ref: "#/components/schemas/UserRef" }
+        deviceId: { $ref: "#/components/schemas/Uuid" }
+        emergencyId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+        recipientId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+        response:
+          oneOf:
+            - $ref: "#/components/schemas/ResponseValue"
+            - type: "null"
+          description: Valor enviado, si era una respuesta
+        declaredAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        estimatedAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        timeConfidence:
+          oneOf:
+            - $ref: "#/components/schemas/TimeConfidence"
+            - type: "null"
+        lateSyncAfterClose: { type: boolean }
+        currentResponse:
+          oneOf:
+            - $ref: "#/components/schemas/ResponseValue"
+            - type: "null"
+          description: Respuesta vigente del convocado ahora, para comparar
+        status:
+          type: string
+          enum: [PENDING, RESOLVED]
+        resolutions:
+          type: array
+          description: Notas y resolución final, en orden cronológico
+          items: { $ref: "#/components/schemas/Resolution" }
+    SyncReviewPage:
+      allOf:
+        - $ref: "#/components/schemas/PageInfo"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/SyncReview" }
+      unevaluatedProperties: false
+
+    # ─────────────── Administración ───────────────
+    BrigadistaAdminView:
+      type: object
+      additionalProperties: false
+      required: [id, active, phone, joinedAt, leftAt]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        active: { type: boolean }
+        phone:
+          oneOf:
+            - $ref: "#/components/schemas/Phone"
+            - type: "null"
+        joinedAt: { $ref: "#/components/schemas/Timestamp" }
+        leftAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+    UserSummary:
+      allOf:
+        - $ref: "#/components/schemas/UserSummaryFields"
+      unevaluatedProperties: false
+    UserSummaryFields:
+      type: object
+      description: Base abierta para componer con `allOf`; usar `UserSummary` o `UserDetail`.
+      required: [id, rut, fullName, email, active, roles, brigadista, mustChangePassword, lastLoginAt, createdAt]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        rut: { $ref: "#/components/schemas/CanonicalRut" }
+        fullName: { $ref: "#/components/schemas/PersonName" }
+        email:
+          oneOf:
+            - $ref: "#/components/schemas/Email"
+            - type: "null"
+        active: { type: boolean }
+        roles:
+          type: array
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/AppRole" }
+        brigadista:
+          oneOf:
+            - $ref: "#/components/schemas/BrigadistaAdminView"
+            - type: "null"
+        mustChangePassword: { type: boolean }
+        lastLoginAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        createdAt: { $ref: "#/components/schemas/Timestamp" }
+    UserDetail:
+      allOf:
+        - $ref: "#/components/schemas/UserSummaryFields"
+        - type: object
+          required: [passwordExpiresAt, deactivatedAt, devices]
+          properties:
+            passwordExpiresAt:
+              oneOf:
+                - $ref: "#/components/schemas/Timestamp"
+                - type: "null"
+            deactivatedAt:
+              oneOf:
+                - $ref: "#/components/schemas/Timestamp"
+                - type: "null"
+            devices:
+              type: array
+              items: { $ref: "#/components/schemas/Device" }
+      unevaluatedProperties: false
+    UserPage:
+      allOf:
+        - $ref: "#/components/schemas/PageInfo"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/UserSummary" }
+      unevaluatedProperties: false
+    UserCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [rut, fullName, roles, brigadista]
+      properties:
+        rut: { $ref: "#/components/schemas/RutInput" }
+        fullName: { $ref: "#/components/schemas/PersonName" }
+        email: { $ref: "#/components/schemas/Email" }
+        roles:
+          type: array
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/AppRole" }
+        brigadista:
+          description: Datos de brigadista; `null` si la cuenta no es brigadista
+          oneOf:
+            - $ref: "#/components/schemas/BrigadistaProfileRequest"
+            - type: "null"
+    UserUpdateRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        fullName: { $ref: "#/components/schemas/PersonName" }
+        email:
+          oneOf:
+            - $ref: "#/components/schemas/Email"
+            - type: "null"
+    BrigadistaProfileRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        phone:
+          oneOf:
+            - $ref: "#/components/schemas/Phone"
+            - type: "null"
+    ReasonRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason: { $ref: "#/components/schemas/Reason" }
+    ProvisionalPassword:
+      type: object
+      additionalProperties: false
+      required: [provisionalPassword, expiresAt]
+      properties:
+        provisionalPassword:
+          type: string
+          description: Se muestra **una sola vez**; no vuelve a estar disponible
+        expiresAt: { $ref: "#/components/schemas/Timestamp" }
+    ActiveEmergencyAddition:
+      type: object
+      additionalProperties: false
+      description: El usuario quedó convocado automáticamente a la convocatoria activa
+      required: [emergencyId, recipientId]
+      properties:
+        emergencyId: { $ref: "#/components/schemas/Uuid" }
+        recipientId: { $ref: "#/components/schemas/Uuid" }
+    UserCreatedResponse:
+      type: object
+      additionalProperties: false
+      required: [user, provisionalPassword, addedToActiveEmergency]
+      properties:
+        user: { $ref: "#/components/schemas/UserDetail" }
+        provisionalPassword: { $ref: "#/components/schemas/ProvisionalPassword" }
+        addedToActiveEmergency:
+          oneOf:
+            - $ref: "#/components/schemas/ActiveEmergencyAddition"
+            - type: "null"
+    UserChangeResult:
+      type: object
+      additionalProperties: false
+      required: [user, addedToActiveEmergency]
+      properties:
+        user: { $ref: "#/components/schemas/UserDetail" }
+        addedToActiveEmergency:
+          oneOf:
+            - $ref: "#/components/schemas/ActiveEmergencyAddition"
+            - type: "null"
+    AuditEntry:
+      type: object
+      additionalProperties: false
+      required: [id, actor, action, entityType, entityId, metadata, createdAt]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        actor:
+          oneOf:
+            - $ref: "#/components/schemas/UserRef"
+            - type: "null"
+          description: "`null` si la acción la hizo el sistema"
+        action: { type: string }
+        entityType: { type: ["string", "null"] }
+        entityId:
+          oneOf:
+            - $ref: "#/components/schemas/Uuid"
+            - type: "null"
+        metadata:
+          type: object
+          description: Sin secretos ni RUT completo
+        createdAt: { $ref: "#/components/schemas/Timestamp" }
+    AuditLogPage:
+      allOf:
+        - $ref: "#/components/schemas/PageInfo"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/AuditEntry" }
+      unevaluatedProperties: false

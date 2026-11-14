@@ -1,6 +1,8 @@
 # Mapa de endpoints del MVP
 
-> **PROPUESTA PARA APROBACIÓN.** Es el mapa; el detalle de cada endpoint
+> **Superado por el contrato v1** ([`openapi-v1.md`](openapi-v1.md)), que
+> recorta el alcance al MVP aprobado y precisa algunas rutas (C1–C14). Se
+> conserva como mapa de referencia. Texto original: es el mapa; el detalle de cada endpoint
 > (entrada, salida, validaciones, errores) va en `backend/openapi/openapi.yaml`,
 > que se escribe tras aprobar este mapa y se acuerda con mobile-architect y
 > web-architect.
