@@ -2,7 +2,7 @@
 
 > **Estado (2026-11-14): APROBADO por el usuario.** Contrato en
 > [`backend/openapi/openapi.yaml`](../../backend/openapi/openapi.yaml)
-> (OpenAPI 3.1, `1.0.0`). **No hay implementación todavía**: la API se
+> (OpenAPI 3.1, `1.0.1`; ver §12). **No hay implementación todavía**: la API se
 > programa en la etapa 2, que requiere autorización del usuario.
 
 Decisiones de base ya aprobadas por el usuario (2026-11-13): D-B1 a D-B6
@@ -67,6 +67,8 @@ Diferencias o precisiones respecto de [`endpoints.md`](endpoints.md) y
 | C13 | Login móvil con un `device.id` de otro usuario → `409 DEVICE_ID_CONFLICT`; revocado → `403 DEVICE_REVOKED`. En ambos la app genera un id nuevo | Un teléfono compartido o reinstalado no debe heredar dispositivo ni token |
 | C14 ✅ | **Contacto manual fuera de v1** (decidido por el usuario; se evalúa para una versión posterior) | No estaba en el alcance aprobado |
 | C15 ✅ | Tras `409 DEVICE_SEQ_CONFLICT`, la app obtiene la sesión del `device.id` nuevo con un **login nuevo** (como C13): pide la contraseña. No se agrega un endpoint para cambiar de dispositivo | Aprobada por el usuario (2026-11-14). Es un caso excepcional (la prevención es guardar `device.id` solo en `device_identity`) y no agrega alcance. Las operaciones siguen pendientes en el teléfono, no se pierden |
+
+| C16 ✅ | Datos del teléfono (revisión 3 de `sqlite/schema.md`): el token push queda en `outbox` hasta 7 días tras confirmarse o 30 días tras un rechazo visto; las operaciones `APPLIED` se conservan 7 días (reenvío tras restaurar un backup); se guardan `addedReason` y `currentResponseId`; se omiten `timeConfidence` y `deviceId` de las respuestas | Aprobada por el usuario (2026-11-14) |
 
 ## 4. Coordinación pendiente
 
@@ -355,3 +357,13 @@ Responde al punto 5. Ninguno de los dos está hecho todavía.
 Si se quiere el lint **antes** de aprobar el contrato, basta con autorizar
 `npx @redocly/cli@2.78.0 lint backend/openapi/openapi.yaml`, que no agrega nada
 al repositorio.
+
+## 12. Versión 1.0.1 (2026-11-14)
+
+Correcciones aprobadas por el usuario tras la revisión 3 del SQLite de
+database-architect. No agregan endpoints ni funciones.
+
+| Id | Problema | Corrección |
+|---|---|---|
+| I1 | Con `recipients` paginado, una respuesta podía llegar antes que su convocado y la FK local abortaba la descarga en cada intento | Regla 4 de `syncPull`: también cubre las convocatorias referidas por `responses` y los convocados referidos por `responses` que no vienen en `recipients.rows`. `LateAddition` agrega `recipient` (el convocado propio), aplicado después de `emergency` y `notices` |
+| I2 | Tras restaurar un backup, la secuencia del servidor puede ser menor que las versiones locales y "aplicar solo si es mayor" rechazaba los datos restaurados | Regla 3 de `syncPull`: con `epochChanged`, la app pone en 0 sus versiones locales antes de aplicar |

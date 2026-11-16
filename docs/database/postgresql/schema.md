@@ -10,6 +10,11 @@
 > backend-architect (índices parciales solo en SQL manual; `updated_at` solo por
 > trigger). Detalle y verificación: [`../review-checklist.md`](../review-checklist.md)
 > §5. Cambios respecto de la revisión 1: mismo documento, §1.
+>
+> **2026-11-14:** §8 se actualiza al contrato v1 aprobado (acuse equivalente C7,
+> `DECLARE_AVAILABILITY` en v1, comprobación de `device_seq` del lote). Solo
+> describe comportamiento de las transacciones; el DDL no cambia y no hace falta
+> migración.
 
 ## 1. Enumeraciones
 
@@ -484,13 +489,22 @@ CREATE INDEX audit_log_entity_idx ON audit_log (entity_type, entity_id);
 
 Toda transacción que escriba en una tabla replicada toma primero
 `pg_advisory_xact_lock(7352001)` (orden fijo de candados; ver `versioning.md`).
+Las operaciones de sincronización lo toman siempre, también el acuse, aunque
+`notice_ack` no sea replicada (contrato v1, garantía 5 de `syncPush`).
+`replicatedWrite` corre en `READ COMMITTED` y lee después del candado
+(`contract-v1-review.md` §4.2).
+
+Antes de procesar un lote de `/v1/sync/push`: si una operación cuyo
+`operation_id` no existe tiene un (`device_id`, `device_seq`) ya usado por otra,
+el lote completo responde `409 DEVICE_SEQ_CONFLICT` sin escribir nada salvo una
+entrada de `audit_log` (`contract-v1-review.md` §2.4).
 
 | Operación                   | En una sola transacción                                                                                                                                                                                                                                                                                        |
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Activar convocatoria        | Candado; `emergency` → `ACTIVE`; `emergency_recipient` por cada usuario con `app_user.active` y `brigadista_profile.active`; `emergency_notice` `ACTIVATION`; `notification_delivery` `QUEUED` por dispositivo no revocado con token `VALID`; `audit_log`. El envío al proveedor ocurre **después** del commit |
 | Respuesta desde la app      | Candado; `sync_operation`; `emergency_response` si no es `REJECTED`; `emergency_recipient` si es `APPLIED`                                                                                                                                                                                                     |
-| Declarar disponibilidad     | Candado; `sync_operation`; `availability_change` si no es `REJECTED`; `brigadista_profile` si es `APPLIED`                                                                                                                                                                                                     |
-| Acuse                       | `sync_operation`; `notice_ack` (si existe el mismo nivel, la operación es repetida)                                                                                                                                                                                                                            |
+| Declarar disponibilidad     | Candado; `sync_operation`; `availability_change` si no es `REJECTED`; `brigadista_profile` si es `APPLIED`. **En v1** (disponibilidad fuera del MVP) solo se guarda `sync_operation` con `REJECTED` / `UNSUPPORTED_OPERATION`                                                                                   |
+| Acuse                       | Candado; **después** del candado: validar que aviso y convocado son de la misma convocatoria (si no, `REJECTED` / `NOT_A_RECIPIENT`) y buscar un acuse equivalente por `notice_ack_once_uq`. Si no existe: `sync_operation` `APPLIED` y después `notice_ack` con `id = operation_id`. Si existe (mismo aviso, convocado, dispositivo y nivel, con otro `operation_id`): solo `sync_operation` con `SUPERSEDED`, `result_code = 'EQUIVALENT_ACK'` y `entity_id` = id del acuse existente; nada en `notice_ack` (C7, `contract-v1-review.md` §1). Ante `23505` en `notice_ack_once_uq`: revertir y procesar la operación una vez más. El mismo `operation_id` reenviado es una operación repetida (`duplicate: true`), no un acuse equivalente |
 | Resolver una operación      | `sync_operation_resolution`; si `CORRECTED`, candado + `emergency_response` `COORDINATOR_PROXY` con `corrects_operation_id`; `audit_log`                                                                                                                                                                       |
 | Restablecer contraseña (Q6) | Ver `security.md` §2                                                                                                                                                                                                                                                                                           |
 | Desactivar cuenta o perfil  | `SELECT ... FOR UPDATE` de `app_user`; inactivo; `credential_version + 1`; revocar sesiones; `audit_log`. Convocados e historial se conservan                                                                                                                                                                  |

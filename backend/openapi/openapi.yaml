@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: EmergenciaApp API
-  version: 1.0.0
+  version: 1.0.1
   summary: API de convocatorias de emergencia para una brigada (app móvil y dashboard web).
   description: |
     **BORRADOR PARA REVISIÓN — no implementado.** Contrato v1 del MVP, escrito
@@ -412,14 +412,17 @@ paths:
            cursor en la misma transacción SQLite que las filas.
         3. Si `syncEpoch` es nulo o distinto del vigente (restauración de un
            backup): `epochChanged: true`, se ignoran los cursores y se descarga
-           desde 0. La app debe además **reenviar** por `/v1/sync/push` sus
-           operaciones de los últimos 7 días (idempotente).
+           desde 0. Antes de aplicar, la app pone en 0 las versiones locales
+           de las filas replicadas (la secuencia del servidor restaurado puede
+           ser menor que la local), y después **reenvía** por `/v1/sync/push`
+           sus operaciones de los últimos 7 días (idempotente).
         4. **Integridad referencial de la respuesta:** toda convocatoria
-           referida por una fila de `recipients` o de `notices` de esta
-           respuesta que **no** esté en `emergencies.rows` de esta misma
-           respuesta va completa, con sus avisos, en `lateAdditions`, sin
-           importar su versión (convocado agregado tarde, o ámbito
-           `emergencies` paginado). Repetirla es inofensivo (upsert). La app
+           referida por una fila de `recipients`, `notices` o `responses`
+           de esta respuesta que **no** esté en `emergencies.rows`, y toda
+           convocatoria cuyo convocado sea referido por una fila de
+           `responses` que **no** esté en `recipients.rows`, va completa en
+           `lateAdditions`, con sus avisos y el convocado propio, sin importar
+           sus versiones (convocado agregado tarde, o ámbitos paginados). Repetirla es inofensivo (upsert). La app
            aplica en orden padre → hijo (`emergencies`, `lateAdditions`,
            `notices`, `recipients`, `responses`) en una sola transacción.
         5. Si algún ámbito trae `hasMore: true`, la app repite la llamada con
@@ -2279,12 +2282,19 @@ components:
     LateAddition:
       type: object
       additionalProperties: false
-      required: [emergency, notices]
+      description: |
+        Convocatoria completa enviada por la regla 4 de `syncPull`. Se aplica
+        en este orden: `emergency`, `notices`, `recipient`. No mueve ningún
+        cursor.
+      required: [emergency, notices, recipient]
       properties:
         emergency: { $ref: "#/components/schemas/SyncEmergency" }
         notices:
           type: array
           items: { $ref: "#/components/schemas/SyncNotice" }
+        recipient:
+          $ref: "#/components/schemas/SyncRecipient"
+          description: La fila de convocado del propio usuario en esa convocatoria.
 
     SyncEmergency:
       type: object

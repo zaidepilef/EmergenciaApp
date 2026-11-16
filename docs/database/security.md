@@ -83,3 +83,19 @@ Motivos de revocación (`revoked_reason`): `LOGOUT`, `ROTATED`,
 
 Sin eliminación de historial en el MVP. Antes de producción debe definirse la
 retención de auditoría, sesiones vencidas y datos de cuentas desactivadas.
+
+**Al definir la retención de `audit_log`** deben incluirse explícitamente las
+entradas de operaciones de sincronización que no tienen fila en
+`sync_operation` (`contract-v1-review.md` §2):
+
+- `SYNC_OPERATION_UNSUPPORTED`: tipo de operación que el modelo no conoce (una
+  por `operationId`).
+- `operationId` que ya pertenece a otro usuario (`REJECTED INVALID_PAYLOAD`;
+  una por `operationId`; el nombre de la acción lo fija backend-architect).
+- `SYNC_DEVICE_SEQ_CONFLICT`: lote rechazado con `409 DEVICE_SEQ_CONFLICT` (una
+  por dispositivo y lote).
+
+Llevan solo la lista cerrada de metadatos (sin payload), pero incluyen
+identificadores de usuario y dispositivo, y `audit_log` es append-only: la
+regla de retención que se apruebe debe decir qué pasa con ellas. Esta nota no
+define la retención; queda pendiente (Q8).

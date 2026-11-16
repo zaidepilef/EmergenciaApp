@@ -21,7 +21,7 @@ de batería.
 ## 2. Estados de una operación
 
 ```
-PENDING ──envío──▶ IN_FLIGHT ──APPLIED / SUPERSEDED / CONFLICT──▶ APPLIED ──▶ (se borra)
+PENDING ──envío──▶ IN_FLIGHT ──APPLIED / SUPERSEDED / CONFLICT──▶ APPLIED ──7 días──▶ (se borra)
    ▲                   │
    └── error de red ───┤
                        └──REJECTED──▶ REJECTED ──el usuario lo ve──▶ REJECTED_ACKNOWLEDGED ──30 días──▶ (se borra)
@@ -40,9 +40,11 @@ PENDING ──envío──▶ IN_FLIGHT ──APPLIED / SUPERSEDED / CONFLICT─
 | Capa       | Protección                                                                                                                                          |
 | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Teléfono   | `operation_id` PK y `device_seq` UNIQUE en `outbox`; un botón presionado dos veces genera dos operaciones distintas y ordenadas, nunca una repetida |
-| Servidor   | `sync_operation.operation_id` PK: si ya existe, devuelve el resultado guardado sin volver a aplicar; U (`device_id`, `device_seq`)                  |
-| Registros  | El registro creado usa el mismo UUID: `emergency_response.id`, `availability_change.id`, `notice_ack.id`                                            |
-| Acuses     | U (`notice_id`, `recipient_id`, `device_id`) en el servidor y U `notice_id` en el teléfono                                                          |
+| Servidor   | `sync_operation.operation_id` PK: si ya existe, devuelve el resultado guardado sin volver a aplicar (`duplicate: true`); U (`device_id`, `device_seq`) |
+| Registros  | El registro creado usa el mismo UUID: `emergency_response.id`, `notice_ack.id` (`availability_change.id` vuelve con la disponibilidad, fuera del MVP) |
+| Acuses     | U (`notice_id`, `recipient_id`, `device_id`, `level`) en el servidor (`notice_ack_once_uq`) y U (`notice_id`, `level`) en el teléfono, que equivale a la del servidor (un solo dispositivo y un solo convocado por convocatoria) |
+| Acuse equivalente | Uno con otro `operation_id` para la misma clave sale `SUPERSEDED` / `EQUIVALENT_ACK`, con `entity_id` = acuse existente. El teléfono lo marca `SYNCED` **sin** cambiar su id local (`sqlite/schema.md` §5.2) |
+| `device_seq` repetido | Con otro `operation_id` (base recreada con el mismo `device_id`): `409 DEVICE_SEQ_CONFLICT` del lote, sin procesar nada. El teléfono no rechaza ni descarta nada: `device_id` nuevo, nuevo inicio de sesión y reenvío de las mismas operaciones (`sqlite/schema.md` §5.5; C15) |
 | Envío push | U (`notice_id`, `recipient_id`, `channel`, `device_id`) en `notification_delivery`                                                                  |
 
 El servidor también detecta **huecos**: si recibe `device_seq` 12 y el último
@@ -66,7 +68,8 @@ fue 10, lo registra (falta la 11) sin bloquear; la 11 puede llegar después.
 | Se limpia                   | Condición                                                                                           |
 | --------------------------- | --------------------------------------------------------------------------------------------------- |
 | Convocatorias cerradas      | `closed_at` de más de 30 días **y** sin operaciones en `outbox` **y** todas sus filas sincronizadas |
-| Historial de disponibilidad | `SYNCED` y de más de 30 días                                                                        |
+| Historial de disponibilidad | `SYNCED` y de más de 30 días (vuelve con la disponibilidad; no existe en v1)                        |
+| Operaciones confirmadas     | `APPLIED` hace más de 7 días (se conservan para el reenvío tras `epochChanged`, `sqlite/schema.md` §5.1) |
 | Operaciones rechazadas      | `REJECTED_ACKNOWLEDGED` hace más de 30 días                                                         |
 
 **Nunca** se limpia: una convocatoria activa, nada `PENDING`, `IN_FLIGHT` o

@@ -61,10 +61,22 @@ Más el contacto manual (`manual_contact`) cuando exista.
 
 ## 5. Re-aviso (E1)
 
-Se reenvía el push del aviso mientras **no** exista `RECEIVED` en ningún
-dispositivo del convocado ni respuesta. Al llegar cualquiera de los dos, se
-cancelan los reintentos (`next_attempt_at = NULL`). Las reglas de tiempo (por
-ejemplo 2, 5 y 10 minutos) las define backend-architect con ui-ux-designer.
+Se reenvía el push del aviso mientras **no** exista ningún acuse
+(`RECEIVED` **u** `OPENED`) del convocado para ese aviso, en ningún
+dispositivo, ni una respuesta. `OPENED` cuenta por sí solo porque en iOS el
+usuario puede abrir la notificación sin que haya habido `RECEIVED` (§3). Al
+llegar cualquiera de ellos, se cancelan los reintentos en **todos** los
+dispositivos del convocado (`next_attempt_at = NULL`); la condición es por
+convocado y aviso (`notice_ack_recipient_idx`), no por dispositivo. Las reglas
+de tiempo (2, 5 y 10 minutos, `docs/backend/push-delivery.md`) las define backend-architect con
+ui-ux-designer.
+
+Un acuse equivalente (`SUPERSEDED` / `EQUIVALENT_ACK`) no cambia nada: el
+re-aviso ya se canceló con el acuse original.
+
+El re-armado de entregas al reactivar a un convocado y los estados `FAILED`
+explícitos (`RECIPIENT_INACTIVE`, `NO_TOKEN`, `DEVICE_REVOKED`) están en
+`contract-v1-review.md` §4.3 y §5.2.
 
 ## 6. Pruebas obligatorias
 
