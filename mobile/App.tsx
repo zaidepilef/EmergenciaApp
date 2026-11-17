@@ -86,7 +86,7 @@ const CODE_TEXT: Record<string, string> = {
   LATE_AFTER_CLOSE: 'Respondiste justo al cierre; el coordinador la revisará.',
 };
 
-type Phase = 'boot' | 'login' | 'main';
+type Phase = 'boot' | 'login' | 'password' | 'main';
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>('boot');
@@ -245,7 +245,7 @@ export default function App() {
         if (await refresh()) {
           const m = await request<Me>('GET', '/v1/me', undefined, access.current);
           setMe(m);
-          setPhase('main');
+          setPhase(m!.mustChangePassword ? 'password' : 'main');
           return;
         }
       } catch {
@@ -296,9 +296,26 @@ export default function App() {
           store.current.refreshToken = res.tokens.refreshToken;
           await save(store.current);
           setMe(res.me);
-          setPhase('main');
+          setPhase(res.tokens.sessionScope === 'PASSWORD_CHANGE_ONLY' ? 'password' : 'main');
         }}
         store={store}
+      />
+    );
+  }
+
+  if (phase === 'password') {
+    return (
+      <PasswordScreen
+        name={me?.fullName ?? ''}
+        change={(currentPassword, newPassword) => authed<LoginResponse>('POST', '/v1/auth/password', { currentPassword, newPassword })}
+        onChanged={async (res) => {
+          access.current = res.tokens.accessToken;
+          store.current.refreshToken = res.tokens.refreshToken;
+          await save(store.current);
+          setMe(res.me);
+          setPhase('main');
+        }}
+        onCancel={logout}
       />
     );
   }
@@ -606,6 +623,87 @@ function resultText(result?: string) {
   if (result === 'SUPERSEDED') return 'Reemplazada';
   if (result === 'CONFLICT') return 'En revisión';
   return 'Enviada';
+}
+
+const PASSWORD_ERRORS: Record<string, string> = {
+  CURRENT_PASSWORD_INVALID: 'La contraseña provisoria no corresponde.',
+  PASSWORD_POLICY: 'La contraseña no puede contener tu RUT.',
+  PASSWORD_REUSED: 'Debe ser distinta de la provisoria.',
+  RATE_LIMITED: 'Demasiados intentos. Espera unos minutos.',
+  VALIDATION_ERROR: 'Debe tener entre 10 y 128 caracteres.',
+};
+
+/** Primer ingreso con contraseña provisoria: hay que crear una propia antes de ver convocatorias. */
+function PasswordScreen({
+  name,
+  change,
+  onChanged,
+  onCancel,
+}: {
+  name: string;
+  change: (currentPassword: string, newPassword: string) => Promise<LoginResponse | null>;
+  onChanged: (r: LoginResponse) => void;
+  onCancel: () => void;
+}) {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [repeat, setRepeat] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const ready = current.length > 0 && next.length >= 10 && repeat.length > 0;
+
+  async function submit() {
+    if (next !== repeat) return setError('Las contraseñas nuevas no coinciden.');
+    setLoading(true);
+    setError(null);
+    try {
+      onChanged((await change(current, next))!);
+    } catch (e) {
+      if (e instanceof NetworkError) setError('Sin conexión. Necesitas red para crear tu contraseña.');
+      else if (e instanceof ApiProblem) setError(PASSWORD_ERRORS[e.code] ?? 'No se pudo guardar. Intenta de nuevo.');
+      else setError('No se pudo guardar. Intenta de nuevo.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const field = (label: string, value: string, set: (v: string) => void) => (
+    <View style={{ gap: 6 }}>
+      <Text style={s.label}>{label}</Text>
+      <TextInput value={value} onChangeText={set} style={s.input} secureTextEntry autoCapitalize="none" autoCorrect={false} accessibilityLabel={label} />
+    </View>
+  );
+
+  return (
+    <KeyboardAvoidingView style={s.root} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <StatusBar style="dark" />
+      <ScrollView contentContainerStyle={[s.content, { paddingTop: 48 }]} keyboardShouldPersistTaps="handled">
+        <Text style={[s.appName, { fontSize: 28 }]}>Crea tu contraseña</Text>
+        <Text style={s.muted}>
+          {name ? 'Hola, ' + name + '. ' : ''}Ingresaste con una contraseña provisoria. Elige una propia para recibir convocatorias: al menos 10 caracteres y sin tu RUT.
+        </Text>
+        {field('CONTRASEÑA PROVISORIA', current, setCurrent)}
+        {field('CONTRASEÑA NUEVA', next, setNext)}
+        {field('REPITE LA NUEVA', repeat, setRepeat)}
+        {error && (
+          <View style={[s.notice, { borderLeftColor: C.no, backgroundColor: C.noSoft }]}>
+            <Text style={s.body}>{error}</Text>
+          </View>
+        )}
+        <Pressable
+          onPress={submit}
+          disabled={loading || !ready}
+          style={({ pressed }) => [s.primary, (loading || !ready) && { opacity: 0.5 }, pressed && s.pressed]}
+          accessibilityRole="button"
+        >
+          {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.primaryText}>Guardar y entrar</Text>}
+        </Pressable>
+        <Pressable onPress={onCancel} style={s.linkBtn}>
+          <Text style={[s.link, { color: C.muted, textAlign: 'center' }]}>Salir</Text>
+        </Pressable>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
 }
 
 function LoginScreen({ onLoggedIn, store }: { onLoggedIn: (r: LoginResponse) => void; store: RefObject<Persisted> }) {

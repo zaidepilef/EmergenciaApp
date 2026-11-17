@@ -15,10 +15,12 @@
 | `GET /v1/dashboard/summary`, `GET /v1/brigadistas` | Solo sesión WEB con `COORD` o `ADMIN`; preparación (`READY`, `NO_DEVICE`, …) informativa |
 | `POST /v1/emergencies`, `POST /v1/emergencies/{id}/activate`, `POST /v1/emergencies/{id}/close` | Requieren `COORD`; alta idempotente por `id`; activar convoca a **todos** los brigadistas activos y encola un envío por dispositivo con token válido |
 | `GET /v1/emergencies/active/summary`, `GET /v1/emergencies/{id}`, `GET /v1/emergencies/{id}/recipients` | `ETag` y `304` en el resumen activo |
+| `POST /v1/auth/password` | Cualquier alcance de sesión. Mín. 10 caracteres, sin el RUT, distinta de la actual; revoca **todas** las sesiones y entrega una `FULL` nueva. Límite de 5 cada 15 min por usuario (en memoria, una instancia) |
+| Administración (`/v1/users*`): listar y buscar, alta, detalle, edición, desactivar y reactivar, restablecer contraseña, otorgar y quitar roles, condición de brigadista (alta, reactivación, teléfono y baja) | Solo sesión WEB con `ADMIN`. Contraseña provisoria de 72 h, una sola vez y `no-store`. Sin borrado físico. `CANNOT_DEACTIVATE_SELF` y `LAST_ADMIN`. Un brigadista que queda activo durante una convocatoria activa se convoca solo (`LATE_ADDITION`); si ya figuraba sin responder, se re-arman sus envíos con el estado previo en auditoría. Cambiar solo el teléfono nunca convoca. Todo queda en `audit_log` |
 | Disponibilidad (contrato **1.1.0**): `DECLARE_AVAILABILITY` en `/v1/sync/push`; `availability` en `/v1/me`, `/v1/brigadistas` (filtro `availability`) y `/v1/dashboard/summary`; `GET /v1/brigadistas/{id}/availability-history` | Informativa, nunca filtra la convocatoria. Orden por `deviceSeq` (mismo teléfono) o `estimatedAt` (60 s o menos: gana la última que llegó, sin revisión). Desactualizada a las 4 h (`AVAILABILITY_STALE_HOURS`). Ver `openspec/changes/add-availability/` |
 
-**Pendiente:** `/v1/sync/pull`, cambio de contraseña, avisos de actualización,
-convocados tardíos, revisiones, administración, **envío real de push** (los envíos
+**Pendiente:** `/v1/sync/pull`, avisos de actualización, alta manual de
+convocados tardíos por el coordinador, revisiones, dispositivos (`/v1/users/{id}/devices`), **envío real de push** (los envíos
 quedan en `QUEUED`; no hay worker), límites de peticiones, pruebas
 de contrato e integración de la API. Desviación conocida: una cuenta
 desactivada recibe `401` en `/v1/sync/push` en vez de `200 ACCOUNT_INACTIVE`.

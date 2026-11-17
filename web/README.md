@@ -17,6 +17,14 @@
   de desactualizada a las 4 h), filtros por disponibilidad, historial de cambios
   de cada uno y la preparación del teléfono. Todo es informativo: no filtra a
   quién se convoca.
+- **Usuarios y roles** (solo `ADMINISTRADOR`): buscar por nombre o RUT, crear
+  cuentas (RUT, nombre, correo, roles y condición de brigadista con teléfono),
+  editar nombre y correo, asignar y quitar los roles Coordinador y Administrador,
+  dar de alta o de baja como brigadista, desactivar con motivo, reactivar y
+  restablecer la contraseña. La contraseña provisoria (72 h) se muestra una sola
+  vez. Las cuentas no se borran: se desactivan.
+- **Cambio de contraseña** (`/cambiar-clave`): obligatorio al primer ingreso con
+  contraseña provisoria.
 - **Sin convocatoria activa**: conteo por disponibilidad (disponible, no
   disponible, en servicio, desactualizada y sin declarar).
 
@@ -32,6 +40,8 @@ El navegador nunca ve los tokens. Next.js los guarda en cookies `httpOnly`
 | `POST /bff/emergencies` | Crea el borrador y lo activa |
 | `POST /bff/emergencies/{id}/close` | Cierra |
 | `GET /bff/brigadistas/{id}/availability` | Historial de disponibilidad (50 cambios) |
+| `/bff/admin/users…` | Administración: reenvía solo las rutas y métodos del contrato (lista cerrada), con `no-store` |
+| `/cambiar-clave` (Server Action) | `POST /v1/auth/password` y guarda las cookies de la sesión nueva |
 | Cerrar sesión (Server Action) | `POST /v1/auth/logout` y borra las cookies |
 
 Si el token de acceso venció, el BFF renueva una vez con el refresh token y
@@ -61,5 +71,5 @@ Usuario de prueba: RUT `16.200.587-1`, contraseña `Brigada2026!`
 - Pruebas Vitest + Testing Library + Playwright.
 - Validación de RUT en el formulario con `packages/shared/`.
 - Uso de `ETag` / `304` en el sondeo, paginación de brigadistas, avisos de
-  actualización, revisiones pendientes y administración de usuarios.
+  actualización, revisiones pendientes y dispositivos de cada usuario.
 - Revisión de diseño por ui-ux-designer.

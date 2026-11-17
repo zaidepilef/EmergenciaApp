@@ -29,9 +29,11 @@ Stack: Expo SDK 58 + React Native (decisión del proyecto, ver `AGENTS.md`).
   conexión (operación `DECLARE_AVAILABILITY` en la misma cola). Muestra hace cuánto
   se declaró y, pasadas 4 h, pregunta "¿Sigue vigente?". Es informativa: no
   responde la convocatoria.
+- **Primer ingreso con contraseña provisoria** (cuenta creada en el panel): pide
+  crear una contraseña propia antes de mostrar convocatorias (`/v1/auth/password`).
 
 ## Limitaciones de la demo
 
 - Persistencia en SecureStore (no SQLite); sin `/v1/sync/pull`.
-- Sin notificaciones push ni cambio de contraseña.
+- Sin notificaciones push; el cambio de contraseña voluntario (con sesión completa) no tiene pantalla.
 - El reloj monotónico es `performance.now()` del proceso de la app.

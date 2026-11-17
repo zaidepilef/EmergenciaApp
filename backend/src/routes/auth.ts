@@ -3,7 +3,7 @@ import { parseRut } from "@emergencia/shared/rut";
 import { prisma } from "../db.js";
 import { config } from "../config.js";
 import { ApiError } from "../http/problem.js";
-import { dummyHash, verifyPassword } from "../auth/password.js";
+import { dummyHash, hashPassword, verifyPassword } from "../auth/password.js";
 import { newRefreshToken, sha256, signAccessToken } from "../auth/tokens.js";
 import { guard } from "../auth/guard.js";
 import { uuidv7 } from "../ids.js";
@@ -220,4 +220,99 @@ export async function authRoutes(app: FastifyInstance) {
     });
     return reply.status(204).send();
   });
+
+  /**
+   * Cambio de contraseña propia (obligatorio con provisoria). En una transacción:
+   * hash nuevo, fin de la provisoria, credential_version + 1, revocación de todas
+   * las sesiones y una sesión FULL nueva para el mismo cliente y dispositivo.
+   */
+  app.post<{ Body: { currentPassword: string; newPassword: string } }>(
+    "/v1/auth/password",
+    {
+      preHandler: guard({ scope: "ANY" }),
+      schema: {
+        body: {
+          type: "object",
+          additionalProperties: false,
+          required: ["currentPassword", "newPassword"],
+          properties: {
+            currentPassword: { type: "string", minLength: 1, maxLength: 128 },
+            newPassword: { type: "string", minLength: 10, maxLength: 128 },
+          },
+        },
+      },
+    },
+    async (req, reply) => {
+      const { userId, sessionId } = req.auth!;
+      if (!passwordChangeAllowed(userId)) throw new ApiError(429, "RATE_LIMITED", "Demasiados intentos; espera unos minutos");
+      const { currentPassword, newPassword } = req.body;
+      const user = await prisma.appUser.findUniqueOrThrow({ where: { id: userId } });
+      if (!(await verifyPassword(user.passwordHash, currentPassword))) {
+        throw new ApiError(422, "CURRENT_PASSWORD_INVALID", "La contraseña actual no corresponde");
+      }
+      const rutBody = user.rut.split("-")[0]!;
+      if (newPassword.replace(/[.\-\s]/g, "").includes(rutBody)) {
+        throw new ApiError(422, "PASSWORD_POLICY", "La contraseña no puede contener tu RUT", [{ field: "/newPassword", code: "PASSWORD_CONTAINS_RUT" }]);
+      }
+      if (await verifyPassword(user.passwordHash, newPassword)) {
+        throw new ApiError(422, "PASSWORD_REUSED", "La contraseña nueva debe ser distinta de la actual");
+      }
+
+      const current = await prisma.authSession.findUniqueOrThrow({ where: { id: sessionId } });
+      const hash = await hashPassword(newPassword);
+      const now = new Date();
+      const refreshToken = newRefreshToken();
+      const ttl = current.clientType === "MOBILE" ? config.refreshTtlMobileSec : config.refreshTtlWebSec;
+      const expiresAt = new Date(now.getTime() + ttl * 1000);
+      const { session, cv } = await prisma.$transaction(async (tx) => {
+        const updated = await tx.appUser.update({
+          where: { id: userId },
+          data: {
+            passwordHash: hash,
+            mustChangePassword: false,
+            passwordExpiresAt: null,
+            passwordChangedAt: now,
+            credentialVersion: { increment: 1 },
+            updatedAt: now,
+          },
+        });
+        await tx.authSession.updateMany({
+          where: { userId, revokedAt: null },
+          data: { revokedAt: now, revokedReason: "PASSWORD_CHANGED" },
+        });
+        const session = await tx.authSession.create({
+          data: {
+            userId,
+            familyId: uuidv7(),
+            clientType: current.clientType,
+            deviceId: current.deviceId,
+            scope: "FULL",
+            credentialVersion: updated.credentialVersion,
+            refreshTokenHash: sha256(refreshToken),
+            expiresAt,
+          },
+        });
+        await tx.auditLog.create({
+          data: { actorUserId: userId, action: "PASSWORD_CHANGED", entityType: "app_user", entityId: userId, metadata: { clientType: current.clientType } },
+        });
+        return { session, cv: updated.credentialVersion };
+      });
+      reply.header("Cache-Control", "no-store");
+      return {
+        tokens: await issueTokens(session.id, userId, cv, "FULL", refreshToken, expiresAt),
+        me: await buildMe(userId, session.id),
+      };
+    },
+  );
+}
+
+/** Límite simple en memoria: 5 cambios de contraseña por usuario cada 15 min (una instancia). */
+const passwordAttempts = new Map<string, number[]>();
+function passwordChangeAllowed(userId: string): boolean {
+  const now = Date.now();
+  const recent = (passwordAttempts.get(userId) ?? []).filter((t) => now - t < 15 * 60_000);
+  if (recent.length >= 5) return false;
+  recent.push(now);
+  passwordAttempts.set(userId, recent);
+  return true;
 }

@@ -9,6 +9,7 @@ import { meRoutes } from "./routes/me.js";
 import { brigadistaRoutes } from "./routes/brigadista.js";
 import { syncPushRoutes } from "./routes/sync-push.js";
 import { coordinatorRoutes } from "./routes/coordinator.js";
+import { adminRoutes } from "./routes/admin.js";
 
 // Cuerpos JSON estrictos (sin coerción). Querystring y parámetros de ruta llegan
 // siempre como texto: ahí sí se convierten tipos (`?limit=2`, `?active=false`).
@@ -69,5 +70,6 @@ export function buildApp() {
   app.register(brigadistaRoutes);
   app.register(syncPushRoutes);
   app.register(coordinatorRoutes);
+  app.register(adminRoutes);
   return app;
 }

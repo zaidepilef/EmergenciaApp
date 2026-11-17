@@ -78,6 +78,7 @@ export interface Me {
   email: string | null;
   roles: string[];
   capabilities: string[];
+  mustChangePassword: boolean;
   brigadista: { id: string; active: boolean; availability: Availability } | null;
 }
 

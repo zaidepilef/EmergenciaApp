@@ -66,7 +66,16 @@ export async function login(rut: string, password: string) {
   const r = await raw("POST", "/v1/auth/login", { clientType: "WEB", rut, password });
   if (r.status !== 200) throw new ApiError(r.status, r.json?.code ?? "UNKNOWN");
   await storeTokens(r.json.tokens);
-  return r.json.me as { fullName: string; roles: string[]; capabilities: string[] };
+  return {
+    me: r.json.me as { fullName: string; roles: string[]; capabilities: string[] },
+    mustChangePassword: r.json.tokens.sessionScope === "PASSWORD_CHANGE_ONLY",
+  };
+}
+
+/** Cambio de contraseña propia; la API revoca las sesiones y entrega una FULL nueva. */
+export async function changePassword(currentPassword: string, newPassword: string) {
+  const r = await callApi<{ tokens: AuthTokens }>("POST", "/v1/auth/password", { currentPassword, newPassword });
+  await storeTokens(r.tokens);
 }
 
 async function refresh(): Promise<string> {

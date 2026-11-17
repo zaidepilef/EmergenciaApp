@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { logoutAction } from "./actions";
+import { UsersView } from "./Users";
 import type {
   AvailabilityChange,
   AvailabilityCounts,
@@ -37,7 +38,7 @@ const ERRORS: Record<string, string> = {
   FORBIDDEN_ORIGIN: "Petición rechazada por seguridad. Recarga la página.",
 };
 
-type Tab = "convocatoria" | "brigadistas";
+type Tab = "convocatoria" | "brigadistas" | "usuarios";
 
 export function Dashboard() {
   const [state, setState] = useState<DashboardState | null>(null);
@@ -54,6 +55,10 @@ export function Dashboard() {
         return;
       }
       const json = await res.json();
+      if (json.code === "PASSWORD_CHANGE_REQUIRED") {
+        window.location.href = "/cambiar-clave";
+        return;
+      }
       if (!res.ok) {
         // REFRESH_RACE u otra falla transitoria: se reintenta en el próximo sondeo.
         if (json.code !== "REFRESH_RACE") setError(ERRORS[json.code] ?? "No se pudo actualizar el panel.");
@@ -78,6 +83,8 @@ export function Dashboard() {
   }, [load]);
 
   const isCoord = state?.me.capabilities.includes("COORD") ?? false;
+  const isAdmin = state?.me.capabilities.includes("ADMIN") ?? false;
+  const tabs: Tab[] = isAdmin ? ["convocatoria", "brigadistas", "usuarios"] : ["convocatoria", "brigadistas"];
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-5 px-4 py-5">
@@ -101,15 +108,15 @@ export function Dashboard() {
         </div>
       </header>
 
-      <nav className="flex gap-2" aria-label="Secciones">
-        {(["convocatoria", "brigadistas"] as Tab[]).map((t) => (
+      <nav className="flex flex-wrap gap-2" aria-label="Secciones">
+        {tabs.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             aria-current={tab === t ? "page" : undefined}
             className={`min-h-10 rounded-full border px-4 font-semibold ${tab === t ? "border-fg bg-fg text-bg" : "border-line bg-surface"}`}
           >
-            {t === "convocatoria" ? "Convocatoria" : `Brigadistas${state ? ` (${state.brigadistas.length})` : ""}`}
+            {t === "convocatoria" ? "Convocatoria" : t === "usuarios" ? "Usuarios y roles" : `Brigadistas${state ? ` (${state.brigadistas.length})` : ""}`}
           </button>
         ))}
       </nav>
@@ -117,6 +124,7 @@ export function Dashboard() {
       {!state && !error && <p className="text-muted">Cargando el panel…</p>}
       {state && tab === "convocatoria" && <EmergencyView state={state} now={now} isCoord={isCoord} reload={load} />}
       {state && tab === "brigadistas" && <BrigadistasView items={state.brigadistas} counts={state.availability} now={now} />}
+      {state && tab === "usuarios" && isAdmin && <UsersView myUserId={state.me.id} now={now} onChanged={load} />}
     </div>
   );
 }

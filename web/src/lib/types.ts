@@ -104,3 +104,31 @@ export interface DashboardState {
   brigadistas: BrigadistaSummary[];
   availability: AvailabilityCounts;
 }
+
+// ─── Administración (contrato v1, tag admin) ───
+
+export type AppRole = "ADMINISTRADOR" | "COORDINADOR";
+
+export interface UserSummary {
+  id: string;
+  rut: string;
+  fullName: string;
+  email: string | null;
+  active: boolean;
+  roles: AppRole[];
+  brigadista: { id: string; active: boolean; phone: string | null; joinedAt: string; leftAt: string | null } | null;
+  mustChangePassword: boolean;
+  lastLoginAt: string | null;
+  createdAt: string;
+}
+
+export interface UserDetail extends UserSummary {
+  passwordExpiresAt: string | null;
+  deactivatedAt: string | null;
+  devices: { id: string; platform: string; pushStatus: string; lastSeenAt: string | null; revokedAt: string | null }[];
+}
+
+export interface ProvisionalPassword {
+  provisionalPassword: string;
+  expiresAt: string;
+}
