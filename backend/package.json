@@ -3,15 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "API de EmergenciaApp. Por ahora contiene el esquema Prisma, las migraciones y las pruebas de integración de la base.",
+  "description": "API de EmergenciaApp (primer tramo del contrato v1: login, convocatoria activa y sincronización), esquema Prisma, migraciones y pruebas de integración.",
   "engines": {
     "node": ">=24.0.0"
   },
   "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "db:seed": "tsx prisma/seed.ts",
     "prisma:format": "prisma format",
     "prisma:validate": "prisma validate",
     "prisma:diff": "prisma migrate diff --from-empty --to-schema prisma/schema.prisma --script",
     "db:up": "docker compose -f ../compose.yaml up -d --wait postgres",
+    "db:admin": "docker compose -f ../compose.yaml --profile tools up -d pgadmin",
     "db:stop": "docker compose -f ../compose.yaml stop postgres",
     "db:migrate": "prisma migrate deploy",
     "db:status": "prisma migrate status",
@@ -20,9 +25,22 @@
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "devDependencies": {
+    "@types/node": "22.20.5",
     "@types/pg": "8.23.1",
     "pg": "8.23.1",
     "prisma": "7.10.1",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
     "vitest": "5.0.5"
+  },
+  "dependencies": {
+    "@emergencia/shared": "file:../packages/shared",
+    "@node-rs/argon2": "2.2.2",
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "fastify": "5.12.8",
+    "jose": "6.2.15"
   }
 }

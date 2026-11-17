@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: EmergenciaApp API
-  version: 1.0.1
+  version: 1.1.0
   summary: API de convocatorias de emergencia para una brigada (app móvil y dashboard web).
   description: |
     **BORRADOR PARA REVISIÓN — no implementado.** Contrato v1 del MVP, escrito
@@ -518,6 +518,12 @@ paths:
         - name: readiness
           in: query
           schema: { $ref: "#/components/schemas/ReadinessState" }
+        - name: availability
+          in: query
+          description: |
+            Filtra por disponibilidad declarada (1.1.0). `STALE`: declarada hace
+            más de 4 h, cualquier estado. `UNDECLARED`: nunca declaró.
+          schema: { $ref: "#/components/schemas/AvailabilityFilter" }
         - name: q
           in: query
           description: Búsqueda por nombre (prefijo, sin distinguir mayúsculas ni tildes)
@@ -535,6 +541,34 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+
+  /v1/brigadistas/{brigadistaId}/availability-history:
+    get:
+      tags: [dashboard]
+      operationId: getAvailabilityHistory
+      summary: Historial de disponibilidad de un brigadista (1.1.0)
+      description: |
+        Todas las declaraciones, también las `SUPERSEDED`. Más recientes
+        primero por hora estimada; desempate por id.
+      x-capabilities: [COORD, ADMIN]
+      x-client: [WEB]
+      parameters:
+        - $ref: "#/components/parameters/BrigadistaIdPath"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Página del historial
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AvailabilityHistoryPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
         "500": { $ref: "#/components/responses/InternalError" }
 
   # ───────────────────────────── Convocatorias ─────────────────────────────
@@ -1451,6 +1485,12 @@ components:
       in: path
       required: true
       schema: { $ref: "#/components/schemas/Uuid" }
+    BrigadistaIdPath:
+      name: brigadistaId
+      in: path
+      required: true
+      description: Id del perfil de brigadista
+      schema: { $ref: "#/components/schemas/Uuid" }
     UserIdPath:
       name: userId
       in: path
@@ -1859,10 +1899,13 @@ components:
     BrigadistaSelf:
       type: object
       additionalProperties: false
-      required: [id, active]
+      required: [id, active, availability]
       properties:
         id: { $ref: "#/components/schemas/Uuid" }
         active: { type: boolean }
+        availability:
+          $ref: "#/components/schemas/Availability"
+          description: Estado vigente que tiene el servidor (1.1.0). El teléfono lo adopta tras `SUPERSEDED`
 
     PushStatus:
       type: string
@@ -1949,24 +1992,53 @@ components:
           description: La acción se registró sin conexión
     SyncOperationType:
       type: string
-      enum: [RESPOND_EMERGENCY, ACK_NOTICE, REGISTER_PUSH_TOKEN]
+      enum: [DECLARE_AVAILABILITY, RESPOND_EMERGENCY, ACK_NOTICE, REGISTER_PUSH_TOKEN]
       description: |
-        Tipos de v1. `DECLARE_AVAILABILITY` existe en el modelo pero está
-        fuera del MVP: si llega, sale `REJECTED UNSUPPORTED_OPERATION` y **se
-        guarda** en `sync_operation`. Un tipo que el modelo no conoce también
+        `DECLARE_AVAILABILITY` se procesa desde 1.1.0 (disponibilidad en el
+        MVP, 2026-11-17); antes salía `REJECTED UNSUPPORTED_OPERATION`. Un tipo
+        que el modelo no conoce
         sale `UNSUPPORTED_OPERATION`, sin fila (garantía 6). El servidor se
         despliega siempre antes que una app que emita un tipo nuevo.
     SyncOperation:
       oneOf:
+        - $ref: "#/components/schemas/DeclareAvailabilityOperation"
         - $ref: "#/components/schemas/RespondEmergencyOperation"
         - $ref: "#/components/schemas/AckNoticeOperation"
         - $ref: "#/components/schemas/RegisterPushTokenOperation"
       discriminator:
         propertyName: type
         mapping:
+          DECLARE_AVAILABILITY: "#/components/schemas/DeclareAvailabilityOperation"
           RESPOND_EMERGENCY: "#/components/schemas/RespondEmergencyOperation"
           ACK_NOTICE: "#/components/schemas/AckNoticeOperation"
           REGISTER_PUSH_TOKEN: "#/components/schemas/RegisterPushTokenOperation"
+    DeclareAvailabilityOperation:
+      description: |
+        Disponibilidad declarada (1.1.0). Informativa: **no** cambia a quién se
+        convoca (RN-06) ni la respuesta (RN-09). Crea una fila en el historial
+        (nunca se borra). Orden: del mismo dispositivo manda `deviceSeq`; de
+        otro, `estimatedAt`, y con 60 s o menos de diferencia gana la que llegó
+        última (`APPLIED`, sin `CONFLICT` ni revisión del coordinador). La más
+        antigua sale `SUPERSEDED`. Perfil inactivo: `REJECTED ACCOUNT_INACTIVE`;
+        cuenta sin perfil de brigadista o estado desconocido:
+        `REJECTED INVALID_PAYLOAD`. Declarar el mismo estado otra vez es una
+        reconfirmación: renueva `declaredAt`.
+      allOf:
+        - $ref: "#/components/schemas/SyncOperationBase"
+        - type: object
+          required: [type, baseRowVersion, payload]
+          properties:
+            type: { type: string, const: DECLARE_AVAILABILITY }
+            baseRowVersion:
+              $ref: "#/components/schemas/RowVersion"
+              description: "`availability.rowVersion` que veía el teléfono al declarar"
+            payload:
+              type: object
+              additionalProperties: false
+              required: [status]
+              properties:
+                status: { $ref: "#/components/schemas/AvailabilityStatus" }
+      unevaluatedProperties: false
     RespondEmergencyOperation:
       description: |
         Respuesta `VOY` / `NO_PUEDO` del brigadista. Crea una fila en el
@@ -2121,14 +2193,15 @@ components:
             - $ref: "#/components/schemas/Uuid"
             - type: "null"
           description: |
-            Fila creada o afectada (respuesta, acuse); `null` si fue rechazada.
+            Fila creada o afectada (respuesta, acuse, cambio de disponibilidad);
+            `null` si fue rechazada.
             Normalmente igual a `operationId`; con `EQUIVALENT_ACK` es el acuse
             existente.
         rowVersion:
           oneOf:
             - $ref: "#/components/schemas/RowVersion"
             - type: "null"
-          description: Versión del dato vigente afectado (por ejemplo el convocado), si cambió; `null` para acuses y tokens
+          description: Versión del dato vigente afectado (el convocado, o el perfil en `DECLARE_AVAILABILITY`), si cambió; `null` para acuses y tokens
         lateSyncAfterClose:
           type: boolean
           description: Respuesta tomada antes del cierre que llegó después
@@ -2444,6 +2517,65 @@ components:
           type: ["string", "null"]
           description: "`null` en la última página"
 
+    # ─────────────── Disponibilidad (1.1.0) ───────────────
+    AvailabilityStatus:
+      type: string
+      enum: [DISPONIBLE, NO_DISPONIBLE, EN_SERVICIO]
+    AvailabilityFilter:
+      type: string
+      enum: [DISPONIBLE, NO_DISPONIBLE, EN_SERVICIO, STALE, UNDECLARED]
+    Availability:
+      type: object
+      additionalProperties: false
+      description: |
+        Informativa: **nunca** filtra convocados. `stale` se calcula
+        (`ahora − declaredAt > 4 h`, `AVAILABILITY_STALE_HOURS`) y no cambia el
+        estado (RN-03). Sin declaración: `status` y `declaredAt` en `null`.
+      required: [status, declaredAt, stale, rowVersion]
+      properties:
+        status:
+          oneOf:
+            - $ref: "#/components/schemas/AvailabilityStatus"
+            - type: "null"
+        declaredAt:
+          oneOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+          description: Hora estimada por el servidor de la declaración vigente
+        stale: { type: boolean }
+        rowVersion:
+          $ref: "#/components/schemas/RowVersion"
+          description: Versión del perfil; la app la envía como `baseRowVersion`
+    AvailabilityChange:
+      type: object
+      additionalProperties: false
+      required: [id, status, source, estimatedAt, receivedAt, timeConfidence, createdOffline, syncResult, current]
+      properties:
+        id: { $ref: "#/components/schemas/Uuid" }
+        status: { $ref: "#/components/schemas/AvailabilityStatus" }
+        source: { $ref: "#/components/schemas/ActionSource" }
+        estimatedAt: { $ref: "#/components/schemas/Timestamp" }
+        receivedAt: { $ref: "#/components/schemas/Timestamp" }
+        timeConfidence: { $ref: "#/components/schemas/TimeConfidence" }
+        createdOffline: { type: boolean }
+        syncResult:
+          type: string
+          enum: [APPLIED, SUPERSEDED, CONFLICT]
+          description: "`CONFLICT` no se emite (Q1); queda por compatibilidad con el modelo"
+        current:
+          type: boolean
+          description: Es la declaración vigente
+    AvailabilityHistoryPage:
+      allOf:
+        - $ref: "#/components/schemas/PageInfo"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/AvailabilityChange" }
+      unevaluatedProperties: false
+
     # ─────────────── Dashboard ───────────────
     ReadinessState:
       type: string
@@ -2472,7 +2604,7 @@ components:
       type: object
       additionalProperties: false
       description: Vista del coordinador. Sin RUT.
-      required: [id, userId, fullName, phone, active, accountActive, readiness]
+      required: [id, userId, fullName, phone, active, accountActive, readiness, availability]
       properties:
         id:
           $ref: "#/components/schemas/Uuid"
@@ -2486,6 +2618,7 @@ components:
         active: { type: boolean }
         accountActive: { type: boolean }
         readiness: { $ref: "#/components/schemas/BrigadistaReadiness" }
+        availability: { $ref: "#/components/schemas/Availability" }
     BrigadistaPage:
       allOf:
         - $ref: "#/components/schemas/PageInfo"
@@ -2499,7 +2632,7 @@ components:
     DashboardSummary:
       type: object
       additionalProperties: false
-      required: [generatedAt, brigadistas, activeEmergency, pendingReviews]
+      required: [generatedAt, brigadistas, availability, activeEmergency, pendingReviews]
       properties:
         generatedAt: { $ref: "#/components/schemas/Timestamp" }
         brigadistas:
@@ -2514,6 +2647,20 @@ components:
             pushInvalid: { type: integer, minimum: 0 }
             pushDisabled: { type: integer, minimum: 0 }
             notSyncedRecently: { type: integer, minimum: 0 }
+        availability:
+          type: object
+          additionalProperties: false
+          description: |
+            Brigadistas activos por disponibilidad declarada (1.1.0).
+            `disponible + noDisponible + enServicio + undeclared = active`;
+            `stale` se cuenta aparte **y** dentro de su estado.
+          required: [disponible, noDisponible, enServicio, stale, undeclared]
+          properties:
+            disponible: { type: integer, minimum: 0 }
+            noDisponible: { type: integer, minimum: 0 }
+            enServicio: { type: integer, minimum: 0 }
+            stale: { type: integer, minimum: 0 }
+            undeclared: { type: integer, minimum: 0 }
         activeEmergency:
           oneOf:
             - $ref: "#/components/schemas/EmergencyHeader"

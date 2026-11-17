@@ -1,7 +1,42 @@
 # Backend — desarrollo local
 
-> **Estado:** solo existen el esquema Prisma, las migraciones y las pruebas de
-> integración de la base. La API todavía no está implementada.
+> **Estado (2026-11-16):** esquema Prisma, migraciones, pruebas de integración
+> de la base y un **primer tramo de la API** (Fastify 5 + Prisma) usado por la
+> demo móvil y el dashboard web. El resto del contrato v1 está pendiente.
+
+## API — primer tramo del contrato v1
+
+| Implementado | Notas |
+| --- | --- |
+| `GET /health/live`, `GET /health/ready` | |
+| `POST /v1/auth/login` (MOBILE y WEB), `/v1/auth/refresh`, `/v1/auth/logout` | Rotación con `REFRESH_RACE` (10 s) y `REUSE_DETECTED`; logout móvil borra el token push (C2) |
+| `GET /v1/me`, `GET /v1/me/active-emergency` | |
+| `POST /v1/sync/push` | `RESPOND_EMERGENCY`, `ACK_NOTICE`, `REGISTER_PUSH_TOKEN`; idempotencia por `operationId`, `409 DEVICE_SEQ_CONFLICT`, `estimatedAt` monotónico o por desfase, ventana de 60 s, cierre |
+| `GET /v1/dashboard/summary`, `GET /v1/brigadistas` | Solo sesión WEB con `COORD` o `ADMIN`; preparación (`READY`, `NO_DEVICE`, …) informativa |
+| `POST /v1/emergencies`, `POST /v1/emergencies/{id}/activate`, `POST /v1/emergencies/{id}/close` | Requieren `COORD`; alta idempotente por `id`; activar convoca a **todos** los brigadistas activos y encola un envío por dispositivo con token válido |
+| `GET /v1/emergencies/active/summary`, `GET /v1/emergencies/{id}`, `GET /v1/emergencies/{id}/recipients` | `ETag` y `304` en el resumen activo |
+| Disponibilidad (contrato **1.1.0**): `DECLARE_AVAILABILITY` en `/v1/sync/push`; `availability` en `/v1/me`, `/v1/brigadistas` (filtro `availability`) y `/v1/dashboard/summary`; `GET /v1/brigadistas/{id}/availability-history` | Informativa, nunca filtra la convocatoria. Orden por `deviceSeq` (mismo teléfono) o `estimatedAt` (60 s o menos: gana la última que llegó, sin revisión). Desactualizada a las 4 h (`AVAILABILITY_STALE_HOURS`). Ver `openspec/changes/add-availability/` |
+
+**Pendiente:** `/v1/sync/pull`, cambio de contraseña, avisos de actualización,
+convocados tardíos, revisiones, administración, **envío real de push** (los envíos
+quedan en `QUEUED`; no hay worker), límites de peticiones, pruebas
+de contrato e integración de la API. Desviación conocida: una cuenta
+desactivada recibe `401` en `/v1/sync/push` en vez de `200 ACCOUNT_INACTIVE`.
+
+```bash
+npm run db:seed   # BORRA los datos de emergencia_dev y carga la demo
+npm run dev       # API en http://0.0.0.0:3000 (recarga al guardar)
+npm run typecheck
+```
+
+Sin `JWT_PRIVATE_KEY` (Ed25519 PKCS#8 PEM) la API genera una clave al
+arrancar: los tokens de acceso dejan de valer al reiniciar y la app los renueva.
+
+**Datos demo** ([`prisma/seed.ts`](prisma/seed.ts)): una convocatoria activa
+("Incendio forestal") con dos avisos, 14 brigadistas convocados (7 ya
+respondieron) y una coordinadora. Usuario de prueba `16.200.587-1`
+(administrador, coordinador y brigadista); contraseña de todos
+`Brigada2026!` (o `DEMO_PASSWORD`). Solo corre contra una base local.
 
 Todo lo de esta guía es **local**: PostgreSQL en Docker ligado a `127.0.0.1`,
 con credenciales de desarrollo que no son secretos. Producción, VPS y secretos
@@ -35,8 +70,16 @@ la primera vez que se inicializa el volumen):
 | `emergencia_shadow` | Base sombra de Prisma Migrate (`SHADOW_DATABASE_URL`)                    |
 | `emergencia_test`   | Pruebas de integración (`TEST_DATABASE_URL`); se **borra** en cada corrida |
 
-El servicio `mongo` del mismo archivo pertenece a la arquitectura anterior y no
-se usa aquí.
+### pgAdmin (opcional)
+
+`npm run db:admin` levanta pgAdmin 4 (`dpage/pgadmin4:9.19.0`, perfil `tools` de
+`compose.yaml`) en **http://localhost:5050**, sin login propio (modo escritorio)
+y solo en `127.0.0.1`. Trae registrado el servidor "EmergenciaApp (local)" (grupo
+*Desarrollo*) con la clave de desarrollo, desde
+[`docker/pgadmin/`](docker/pgadmin/). Las tablas están en
+`emergencia_dev → Schemas → public → Tables`. Se detiene con
+`docker compose -f ../compose.yaml --profile tools stop pgadmin`.
+
 
 ## Primeros pasos
 

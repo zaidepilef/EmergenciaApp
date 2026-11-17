@@ -1,0 +1,15 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "EmergenciaApp (local)",
+      "Group": "Desarrollo",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "emergencia_dev",
+      "Username": "emergencia_dev",
+      "PassFile": "/tmp/pgpass",
+      "SSLMode": "disable",
+      "Comment": "Contenedor postgres de compose.yaml. Credenciales solo de desarrollo."
+    }
+  }
+}

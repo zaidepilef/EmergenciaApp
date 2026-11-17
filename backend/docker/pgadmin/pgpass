@@ -1,0 +1,1 @@
+postgres:5432:*:emergencia_dev:dev_only_local_password
