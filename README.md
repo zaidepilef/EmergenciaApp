@@ -9,6 +9,7 @@ responden `VOY` o `NO_PUEDO`, también sin conexión.
 - **Dashboard web** para coordinadores y administradores.
 
 Requisitos del producto: [`docs/product/requirements.md`](docs/product/requirements.md).
+Trabajo pendiente: [`docs/product/backlog.md`](docs/product/backlog.md).
 Arquitectura, decisiones y subagentes: [`AGENTS.md`](AGENTS.md).
 
 ## Estructura

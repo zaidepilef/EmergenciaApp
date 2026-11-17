@@ -19,7 +19,7 @@
 | Administración (`/v1/users*`): listar y buscar, alta, detalle, edición, desactivar y reactivar, restablecer contraseña, otorgar y quitar roles, condición de brigadista (alta, reactivación, teléfono y baja) | Solo sesión WEB con `ADMIN`. Contraseña provisoria de 72 h, una sola vez y `no-store`. Sin borrado físico. `CANNOT_DEACTIVATE_SELF` y `LAST_ADMIN`. Un brigadista que queda activo durante una convocatoria activa se convoca solo (`LATE_ADDITION`); si ya figuraba sin responder, se re-arman sus envíos con el estado previo en auditoría. Cambiar solo el teléfono nunca convoca. Todo queda en `audit_log` |
 | Disponibilidad (contrato **1.1.0**): `DECLARE_AVAILABILITY` en `/v1/sync/push`; `availability` en `/v1/me`, `/v1/brigadistas` (filtro `availability`) y `/v1/dashboard/summary`; `GET /v1/brigadistas/{id}/availability-history` | Informativa, nunca filtra la convocatoria. Orden por `deviceSeq` (mismo teléfono) o `estimatedAt` (60 s o menos: gana la última que llegó, sin revisión). Desactualizada a las 4 h (`AVAILABILITY_STALE_HOURS`). Ver `openspec/changes/add-availability/` |
 
-**Pendiente:** `/v1/sync/pull`, avisos de actualización, alta manual de
+**Pendiente** (detalle en [`docs/product/backlog.md`](../docs/product/backlog.md)): `/v1/sync/pull`, avisos de actualización, alta manual de
 convocados tardíos por el coordinador, revisiones, dispositivos (`/v1/users/{id}/devices`), **envío real de push** (los envíos
 quedan en `QUEUED`; no hay worker), límites de peticiones, pruebas
 de contrato e integración de la API. Desviación conocida: una cuenta

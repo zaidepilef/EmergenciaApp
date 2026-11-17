@@ -61,6 +61,8 @@ EmergenciaApp/
 - Los documentos de la arquitectura anterior están en `docs/archive/pwa-mongodb/`
   (solo histórico). Los requisitos de dominio vigentes están en
   `docs/product/requirements.md`.
+- Lo que falta para el MVP, por área y con su dueño, está en
+  `docs/product/backlog.md` (corte 2026-11-17). Se actualiza al cerrar cada tramo.
 - Cada área vive en su carpeta y tiene su propio `package.json`; la raíz no es
   un proyecto Node.
 - La transformación sigue por etapas, documentando cada cambio (OpenSpec / ADR)
