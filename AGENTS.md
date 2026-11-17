@@ -2,8 +2,8 @@
 
 ## Dirección del proyecto (vigente desde 2026-11-12)
 
-El proyecto está en **transición gradual** desde la PWA actual (Next.js + MongoDB)
-hacia una arquitectura **móvil offline-first**:
+El proyecto pasó de una PWA (Next.js + MongoDB, retirada el 2026-11-16) a una
+arquitectura **móvil offline-first**:
 
 - **PostgreSQL**: base de datos central en un VPS.
 - **SQLite**: persistencia local en Android e iOS.
@@ -15,12 +15,16 @@ EmergenciaApp/
 ├── .opencode/
 │   └── agents/        # Definiciones de subagentes
 ├── docs/
-│   └── database/      # Arquitectura de datos (dueño: database-architect)
+│   ├── product/       # Requisitos del producto (dominio)
+│   ├── database/      # Arquitectura de datos (dueño: database-architect)
+│   ├── backend/ devops/ …  # Una carpeta por área
+│   └── archive/       # Arquitectura anterior, solo histórico
 ├── openspec/          # Cambios y especificaciones formales
-├── mobile/            # App móvil (pendiente)
-├── backend/           # API / backend (pendiente)
-├── web/               # Dashboard Next.js (se migra desde src/)
-├── packages/shared/   # Validación de RUT compartida (pendiente)
+├── mobile/            # App móvil (demo conectada a la API)
+├── backend/           # API (esquema, migraciones y primer tramo de la API)
+├── web/               # Dashboard Next.js (demo conectada a la API)
+├── packages/shared/   # Validación de RUT compartida
+├── compose.yaml       # PostgreSQL local de desarrollo
 ├── deploy/            # Compose de producción, proxy y deploy/<proveedor>/ (pendiente)
 ├── .github/workflows/ # Pipelines de CI/CD (pendiente)
 └── README.md
@@ -40,8 +44,8 @@ EmergenciaApp/
 
 | Tema | Decisión |
 |---|---|
-| Ubicación | `web/`, migrando la app Next.js actual desde `src/` |
-| Autenticación | BFF: Next.js llama a la API y guarda el token en cookie `httpOnly`; el navegador no ve el token. Se retiran `next-auth`, `mongodb` y `@node-rs/argon2` del proyecto web |
+| Ubicación | `web/`, proyecto Next.js nuevo (el esqueleto anterior en `src/` se eliminó el 2026-11-16) |
+| Autenticación | BFF: Next.js llama a la API y guarda el token en cookie `httpOnly`; el navegador no ve el token. Sin `next-auth`, `mongodb` ni `@node-rs/argon2` en el proyecto web |
 | Respuestas en vivo | Polling cada 10–15 s (sin SSE ni WebSockets en el MVP) |
 | Tipos y RUT | Tipos generados desde OpenAPI (`openapi-typescript`); validación de RUT en `packages/shared/`, común a backend, web y mobile |
 | Pruebas web | Las hace web-architect: Vitest + Testing Library + Playwright |
@@ -50,16 +54,21 @@ EmergenciaApp/
 
 ### Estado de la transición
 
-- El código actual (`src/`, Next.js 16, MongoDB, Auth.js) y los documentos en
-  `docs/` (`architecture.md`, `mongodb-data-model.md`, `authentication.md`,
-  `technical-decisions.md`, etc.) reflejan la **arquitectura anterior**. Siguen
-  siendo referencia de requisitos y dominio, pero sus decisiones de
-  infraestructura (MongoDB, Atlas, PWA sin app nativa) quedan **en revisión** y
-  serán reemplazadas a medida que cada subagente formalice su área.
-- No borrar ni reescribir masivamente lo existente: la transformación se hace por
-  etapas, documentando cada cambio (OpenSpec / ADR) antes de implementarlo.
-- `mobile/` y `backend/` aún no existen; se crean cuando su subagente lo proponga
-  y se apruebe.
+- 2026-11-16, por decisión del usuario: se eliminó el código de la PWA anterior
+  (`src/`, `public/`, `tests/` y su configuración en la raíz: Next.js, Auth.js,
+  MongoDB, ESLint, Vitest, Prettier) y el servicio `mongo` de `compose.yaml`.
+  Queda en el historial de git.
+- Los documentos de la arquitectura anterior están en `docs/archive/pwa-mongodb/`
+  (solo histórico). Los requisitos de dominio vigentes están en
+  `docs/product/requirements.md`.
+- Cada área vive en su carpeta y tiene su propio `package.json`; la raíz no es
+  un proyecto Node.
+- La transformación sigue por etapas, documentando cada cambio (OpenSpec / ADR)
+  antes de implementarlo.
+- `backend/` tiene el esquema, las migraciones y un primer tramo de la API;
+  `mobile/` y `web/` son demos conectadas a ella (2026-11-16). El dashboard
+  aún no usa tipos generados desde OpenAPI ni tiene pruebas Vitest/Playwright. La arquitectura móvil
+  definitiva sigue a cargo de mobile-architect.
 
 ## Subagentes
 
@@ -157,7 +166,7 @@ mediante un BFF con cookie `httpOnly`; sin base de datos ni ORM. Muestra
 respuestas `VOY` / `NO_PUEDO` / pendiente y distingue entrega de respuesta.
 Dueño de sus pruebas (Vitest + Playwright). Documenta en `docs/web/`.
 
-Primera misión: plan de migración `src/` → `web/`, rutas por rol, diseño del BFF,
+Primera misión: estructura del proyecto `web/` (desde cero), rutas por rol, diseño del BFF,
 tipos OpenAPI, polling y plan de pruebas, sin código hasta aprobación.
 
 ### Reparto de responsabilidades compartidas
@@ -191,10 +200,14 @@ tipos OpenAPI, polling y plan de pruebas, sin código hasta aprobación.
 |---|---|
 | Geolocalización | **Fuera del MVP** (coincide con el README). Sin permisos, librerías ni tablas de ubicación; la arquitectura no debe impedir agregarla después |
 | ORM | **Prisma** en el backend, solo para PostgreSQL. Reemplaza la decisión previa D-13 ("sin ORM"). database-architect diseña y revisa; backend-architect escribe `schema.prisma` y migraciones con Prisma Migrate. SQLite móvil usa `expo-sqlite`, sin Prisma |
+| Disponibilidad declarada (2026-11-16) | **Entra al MVP** por decisión del usuario; revierte la exclusión del 2026-11-13. Sigue siendo informativa: no filtra la convocatoria (RN-06). Propuesta en `openspec/changes/add-availability/`, aprobada el 2026-11-17: conflictos de 60 s o menos se resuelven solos, sin declaración por el coordinador y sin push de recordatorio |
 
 ### Inconsistencias abiertas
 
-Ninguna por ahora.
+- `docs/database/synchronization/strategy.md` §4 ordena la disponibilidad por
+  `declared_at` (reloj del teléfono) y las respuestas por `responded_at`; la regla
+  vigente es la de `conflict-resolution.md` (`estimated_at` + ventana de 60 s).
+  Corrige database-architect (tarea 1.2 de `add-availability`).
 
 ## Convenciones generales
 
@@ -202,13 +215,3 @@ Ninguna por ahora.
 - Versiones de dependencias exactas.
 - No versionar secretos reales.
 - No afirmar que algo está implementado si solo está propuesto.
-
-<!-- BEGIN:nextjs-agent-rules -->
-
-## This is NOT the Next.js you know
-
-This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
-
-This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
-
-<!-- END:nextjs-agent-rules -->

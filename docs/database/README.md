@@ -35,7 +35,7 @@
 
 ## 1. Diagnóstico del modelo actual
 
-El único modelo existente es `docs/mongodb-data-model.md` (arquitectura anterior,
+El único modelo existente es `docs/archive/pwa-mongodb/mongodb-data-model.md` (arquitectura anterior,
 sin implementar). Sus entidades y reglas siguen siendo válidas como base de
 dominio, pero tiene vacíos para la nueva arquitectura:
 
@@ -90,7 +90,7 @@ superada por `AGENTS.md`.
 
 - `docs/database/physical-model.md`, `postgresql/schema.md`, `sqlite/schema.md` (nuevos).
 - `backend/prisma/schema.prisma` (backend-architect, revisado por database-architect).
-- `docs/mongodb-data-model.md`: marcar como histórico.
+- `docs/archive/pwa-mongodb/mongodb-data-model.md`: marcado como histórico (archivado el 2026-11-16).
 
 ## 5. Necesidades que afectan a otros subagentes
 

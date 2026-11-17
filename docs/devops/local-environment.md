@@ -20,7 +20,7 @@ Servicio `postgres` de [`compose.yaml`](../../compose.yaml); guía de uso en
 | Healthcheck | `pg_isready -h 127.0.0.1` (TCP) | H-1 resuelto |
 | Init | `backend/docker/postgres-init/01-create-databases.sql` | Solo corre al crear el volumen. LF garantizado por `.gitattributes` |
 | Rutas | Relativas (`./backend/...`, `../compose.yaml`) | Portables a Linux/macOS |
-| Mongo (`mongo`) | Legado, sin autenticación, en `127.0.0.1` | Aceptable en local; se retira con la arquitectura anterior |
+| Mongo (`mongo`) | Retirado de `compose.yaml` el 2026-11-16 | — |
 
 ### Hallazgos
 

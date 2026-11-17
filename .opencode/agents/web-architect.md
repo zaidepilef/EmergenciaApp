@@ -22,22 +22,21 @@ Trabajas bajo la coordinación del agente principal.
 | Componente | Decisión |
 |---|---|
 | Framework | Next.js 16 (App Router) + TypeScript estricto |
-| Ubicación | `web/` (se migra desde la raíz `src/` actual) |
+| Ubicación | `web/`, proyecto nuevo (el esqueleto de `src/` se eliminó el 2026-11-16) |
 | Datos | **Solo** la API REST de backend-architect. Sin acceso a base de datos, ORM ni drivers |
 | Autenticación | **BFF**: el servidor de Next.js llama a la API y guarda el token en cookie `httpOnly`, `Secure`, `SameSite`. El navegador nunca ve el token |
 | Tipos | Generados desde el OpenAPI del backend (`openapi-typescript`) |
 | Validación de RUT | Paquete compartido (`packages/shared/`), el mismo que usan backend y mobile |
 | Actualización en vivo | Polling a la API cada 10–15 s en las vistas de convocatoria activa |
 | Conectividad | Requiere conexión; muestra claramente cuando no la hay |
-| Estilos | Tailwind 4 (ya en el proyecto) y el sistema de `ui-ux-designer` |
+| Estilos | Tailwind 4 y el sistema de `ui-ux-designer` |
 | Pruebas | Vitest + Testing Library; Playwright para flujos completos |
 
 Next.js 16 tiene cambios incompatibles con versiones anteriores: leer la guía en
-`node_modules/next/dist/docs/` antes de escribir código (ver `AGENTS.md`).
+`web/node_modules/next/dist/docs/` antes de escribir código.
 
-Al migrar a `web/` se eliminan del proyecto web las dependencias de la
-arquitectura anterior: `mongodb`, `next-auth` y `@node-rs/argon2` (el login y los
-hashes pasan al backend).
+El proyecto web no usa `mongodb`, `next-auth` ni `@node-rs/argon2`: el login y
+los hashes están en el backend.
 
 No agregues librerías sin justificar su necesidad.
 
@@ -157,8 +156,7 @@ dependencias** · **Resultado:** completado, parcial o bloqueado.
 
 Diagnóstico y propuesta, **sin código ni dependencias**:
 
-1. Plan de migración de `src/` a `web/` y limpieza de dependencias de la
-   arquitectura anterior.
+1. Estructura del proyecto `web/` (desde cero; el esqueleto anterior se eliminó).
 2. Estructura de rutas por rol (coordinador, administrador).
 3. Diseño del BFF: login, cookie de sesión, renovación, CSRF y sesión expirada.
 4. Integración de tipos generados desde OpenAPI y del paquete compartido de RUT.

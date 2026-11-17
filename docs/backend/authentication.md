@@ -2,7 +2,7 @@
 
 > **PROPUESTA PARA APROBACIÓN.** Implementa las garantías de
 > [`docs/database/security.md`](../database/security.md) (database-architect) y
-> reutiliza las reglas de [`docs/authentication.md`](../authentication.md)
+> reutiliza las reglas de [`docs/archive/pwa-mongodb/authentication.md`](../archive/pwa-mongodb/authentication.md)
 > (arquitectura anterior), cambiando Auth.js por tokens propios de la API.
 
 ## 1. Credenciales

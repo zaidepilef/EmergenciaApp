@@ -9,7 +9,7 @@
 |---|---|---|
 | `backend/` | `schema.prisma`, 2 migraciones, 51 pruebas de integración de la base (propiedad P, invariantes, permisos del rol de la app) | El modelo físico está implementado y verificado; falta toda la API |
 | Roles de PostgreSQL | `deploy/postgres/roles.sql`: migrador y aplicación separados | La API debe funcionar **sin** `DELETE` (salvo `user_role`) ni `UPDATE` en append-only: toda corrección es un evento nuevo |
-| Código anterior (`src/`) | Next.js 16 + Auth.js + MongoDB | Sirve de referencia de reglas (RUT, Argon2id, revalidación de sesión en `docs/authentication.md`), no de código: cambia el motor y el mecanismo de sesión |
+| Código anterior (`src/`, eliminado el 2026-11-16) | Next.js 16 + Auth.js + MongoDB | Sirve de referencia de reglas (RUT, Argon2id, revalidación de sesión en `docs/archive/pwa-mongodb/authentication.md`), no de código: cambia el motor y el mecanismo de sesión |
 | `packages/shared/` | No existe | Se crea en la etapa 1 con la validación de RUT (dueño: backend-architect) |
 | Contrato OpenAPI | No existe | Bloquea a web-architect y mobile-architect: es lo primero que se entrega tras aprobar esta propuesta |
 | Node.js | `engines >= 24`; el equipo local tiene 22.18 | Las pruebas de la base corren en 22.12+; para la API se exige 24 LTS (`.nvmrc`) |

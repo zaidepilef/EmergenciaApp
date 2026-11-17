@@ -85,7 +85,7 @@
 2. Contrato HTTP de sincronización (backend-architect + mobile-architect).
 3. Valores de tiempo: re-aviso, vida del token de acceso, plazo de la provisoria.
 4. Confirmar PostgreSQL 18 con devops-architect.
-5. Marcar `docs/mongodb-data-model.md` como histórico.
+5. ~~Marcar `docs/mongodb-data-model.md` como histórico.~~ Hecho: archivado en `docs/archive/pwa-mongodb/` (2026-11-16).
 
 El punto 1 quedó resuelto: autorización dada y revisión 2 implementada (§5).
 

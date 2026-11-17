@@ -18,12 +18,13 @@ Decisiones de base ya aprobadas por el usuario (2026-11-13): D-B1 a D-B6
 | Preparación de la brigada | `/v1/dashboard/summary`, `/v1/brigadistas` |
 | Convocatorias: borrador, activar, avisos de actualización, cerrar, convocados tarde | `/v1/emergencies*` |
 | Panel con polling y `ETag` (llegada separada de respuesta) | `…/active/summary`, `…/{id}/recipients`, `/v1/recipients/{id}/history` |
+| Disponibilidad declarada (**1.1.0**, sumada al MVP el 2026-11-17; `openspec/changes/add-availability/`) | `DECLARE_AVAILABILITY` en `/v1/sync/push`, `availability` en `/v1/me` y `/v1/brigadistas`, `DashboardSummary.availability`, `/v1/brigadistas/{id}/availability-history` |
 | Revisión de conflictos y rechazos (`NOTE`, `CONFIRMED`, `DISMISSED`) | `/v1/sync-reviews*` |
 | Administración: cuentas, provisoria, roles, brigadistas, dispositivos, auditoría | `/v1/users*`, `/v1/devices/*/revoke`, `/v1/audit-log` |
 
 | Fuera de v1 (el modelo de datos ya lo soporta; se agrega sin romper el contrato) |
 |---|
-| Disponibilidad declarada (`DECLARE_AVAILABILITY`, `POST /v1/me/availability`, conteos por disponibilidad) |
+| `POST /v1/me/availability` y declarar desde la web: descartados; la disponibilidad entra solo por `/v1/sync/push` (D1 de `add-availability`) |
 | Reabrir convocatorias (aviso `REOPEN`) |
 | Respuesta registrada por el coordinador en nombre del brigadista (`COORDINATOR_PROXY`) y, con ella, la resolución `CORRECTED` |
 | Registro de contacto manual (`manual_contact`) — decidido fuera de v1 (C14) |

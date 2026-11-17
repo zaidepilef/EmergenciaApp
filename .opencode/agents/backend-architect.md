@@ -76,7 +76,7 @@ sin coordinar con mobile-architect.
 - Revalidar usuario activo y rol en operaciones sensibles (no esperar al vencimiento).
 - Rate limiting en login y cierre de sesión con invalidación.
 
-`docs/authentication.md` contiene un diseño previo (RUT, Argon2id, revalidación,
+`docs/archive/pwa-mongodb/authentication.md` contiene un diseño previo (RUT, Argon2id, revalidación,
 auditoría) pensado para Auth.js; reutiliza sus reglas y adapta el mecanismo de
 sesión a una API móvil.
 
